@@ -871,11 +871,21 @@ async def root():
 
 @api_router.get("/health")
 async def health_check():
+    """Health check with provider status"""
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "twilio_enabled": os.environ.get("TWILIO_ENABLED", "false"),
-        "send_emails": os.environ.get("SEND_EMAILS", "false")
+        "providers": {
+            "twilio_enabled": os.environ.get("TWILIO_ENABLED", "false").lower() in ("true", "1", "yes"),
+            "stripe_enabled": os.environ.get("STRIPE_ENABLED", "false").lower() in ("true", "1", "yes"),
+            "sendgrid_enabled": os.environ.get("SEND_EMAILS", "false").lower() in ("true", "1", "yes"),
+            "calendar_enabled": os.environ.get("CALENDAR_ENABLED", "false").lower() in ("true", "1", "yes")
+        },
+        "compliance": {
+            "sms_consent_enforced": True,
+            "stop_handling_enabled": True,
+            "audit_logging_enabled": True
+        }
     }
 
 
