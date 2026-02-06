@@ -825,6 +825,18 @@ async def mock_payment_page(session_id: str):
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }}
             )
+            
+            # Hook: Log no-show fee revenue if applicable
+            payment_record = await db.payments.find_one(
+                {"stripe_session_id": session_id},
+                {"_id": 0}
+            )
+            appointment = await db.appointments.find_one(
+                {"id": appointment_id},
+                {"_id": 0}
+            )
+            if payment_record and appointment:
+                await log_no_show_fee_on_payment_success(db, payment_record, appointment)
         
         return {
             "status": "success",
