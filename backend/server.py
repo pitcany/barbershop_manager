@@ -39,6 +39,11 @@ from sms_compliance import (
     SMSComplianceService, create_sms_service, 
     is_opt_out_message, is_twilio_enabled
 )
+from revenue_logger import (
+    create_revenue_logger,
+    log_no_show_fee_on_payment_success,
+    log_waitlist_fill_on_booking_success
+)
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
