@@ -257,8 +257,8 @@ class BarbershopAPITester:
         self.token = temp_token
         
         # Test 4: Verify client was created with proper consent tracking
-        # Get clients to find our test client
-        success, data, status = self.make_request('GET', '/clients?search=+15559999999')
+        # Get clients to find our test client (search might not work as expected)
+        success, data, status = self.make_request('GET', '/clients?limit=100')
         if success and data.get('clients'):
             test_client = None
             for client in data['clients']:
@@ -271,6 +271,20 @@ class BarbershopAPITester:
                                     test_client.get('sms_consent_source') == 'web_form' and
                                     test_client.get('sms_consent_timestamp') is not None)
                 self.log_result("Client has proper consent tracking fields", has_consent_fields)
+                
+                # Test 5: Verify existing client with opt-out status (client_1 should have sms_consent=false)
+                opted_out_client = None
+                for client in data['clients']:
+                    if client.get('id') == 'client_1' or client.get('sms_consent_source') == 'opt_out_stop':
+                        opted_out_client = client
+                        break
+                
+                if opted_out_client:
+                    has_opt_out = (opted_out_client.get('sms_consent') == False and
+                                  opted_out_client.get('sms_consent_source') == 'opt_out_stop')
+                    self.log_result("STOP opt-out client properly marked", has_opt_out)
+                else:
+                    self.log_result("STOP opt-out client properly marked", False, "No opted-out client found")
             else:
                 self.log_result("Client has proper consent tracking fields", False, "Test client not found")
         else:
