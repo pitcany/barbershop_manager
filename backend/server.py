@@ -729,7 +729,7 @@ async def stripe_webhook(request: Request):
 
 @api_router.post("/public/sms-consent")
 async def submit_sms_consent(request: SMSConsentRequest):
-    """Public endpoint for SMS consent form"""
+    """Public endpoint for SMS consent form (compliance-compliant)"""
     # Find shop (using first shop for MVP)
     shop_data = await db.shops.find_one({}, {"_id": 0})
     if not shop_data:
@@ -743,26 +743,30 @@ async def submit_sms_consent(request: SMSConsentRequest):
         {"_id": 0}
     )
     
+    consent_timestamp = datetime.now(timezone.utc).isoformat() if request.consent else None
+    
     if client_data:
-        # Update existing client
+        # Update existing client with proper consent tracking
         await db.clients.update_one(
             {"id": client_data["id"]},
             {"$set": {
                 "name": request.name,
                 "sms_consent": request.consent,
-                "sms_consent_date": datetime.now(timezone.utc).isoformat() if request.consent else None,
+                "sms_consent_timestamp": consent_timestamp,
+                "sms_consent_source": "web_form",
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }}
         )
     else:
-        # Create new client
+        # Create new client with proper consent tracking
         client_data = {
             "id": str(uuid.uuid4()),
             "shop_id": shop.id,
             "name": request.name,
             "phone": request.phone,
             "sms_consent": request.consent,
-            "sms_consent_date": datetime.now(timezone.utc).isoformat() if request.consent else None,
+            "sms_consent_timestamp": consent_timestamp,
+            "sms_consent_source": "web_form",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
