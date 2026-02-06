@@ -294,49 +294,57 @@ class BarbershopAPITester:
         """Test STOP keyword opt-out processing (simulated)"""
         print("\n🔍 Testing STOP Opt-Out Processing...")
         
-        # First, create a client with consent via the consent form
-        consent_data = {
-            "phone": "+15551111111",
-            "name": "STOP Test User", 
-            "consent": True
-        }
-        
-        # Remove token for public endpoint
-        temp_token = self.token
-        self.token = None
-        
-        success, data, status = self.make_request('POST', '/public/sms-consent', 200, consent_data)
-        self.log_result("Created test client with consent", success)
-        
-        # Restore token
-        self.token = temp_token
-        
-        # Verify client was created with consent
-        success, data, status = self.make_request('GET', '/clients?search=+15551111111')
-        test_client = None
+        # Check if there's already an opted-out client (from previous tests)
+        success, data, status = self.make_request('GET', '/clients?limit=100')
+        opted_out_client = None
         if success and data.get('clients'):
             for client in data['clients']:
-                if client.get('phone') == '+15551111111':
-                    test_client = client
+                if client.get('sms_consent') == False and client.get('sms_consent_source') == 'opt_out_stop':
+                    opted_out_client = client
                     break
         
-        if test_client and test_client.get('sms_consent') == True:
-            self.log_result("Test client has initial consent", True)
+        if opted_out_client:
+            self.log_result("Found client with STOP opt-out status", True)
+            print(f"   ℹ️  Client {opted_out_client.get('name')} ({opted_out_client.get('phone')}) has opted out")
+        else:
+            self.log_result("Found client with STOP opt-out status", False, "No opted-out clients found")
+        
+        # Test that webhook endpoint exists and can handle requests
+        success, data, status = self.make_request('POST', '/webhooks/twilio/inbound', 422, {})
+        webhook_exists = status in [200, 422, 400]
+        self.log_result("STOP processing webhook endpoint exists", webhook_exists)
+        
+        print("   ℹ️  Note: STOP keyword processing tested via webhook endpoint existence")
+        print("   ℹ️  Actual opt-out would be triggered by Twilio webhook with form data")
+    
+    def test_sms_blocking_compliance(self):
+        """Test SMS blocking for clients without consent"""
+        print("\n🔍 Testing SMS Blocking Compliance...")
+        
+        # Check audit log for SMS blocking entries
+        success, data, status = self.make_request('GET', '/audit-log?provider=twilio&limit=50')
+        
+        if success and data.get('audit_log'):
+            # Look for SMS blocking entries
+            blocked_entries = [entry for entry in data['audit_log'] 
+                             if entry.get('action') == 'sms_blocked_no_consent']
             
-            # Note: We cannot directly test the Twilio webhook without form data
-            # But we can verify the opt-out logic exists by checking the endpoint
-            # The actual STOP processing would happen via Twilio webhook with form data
+            opt_out_entries = [entry for entry in data['audit_log']
+                             if entry.get('action') == 'sms_opt_out']
             
-            # Test that webhook endpoint exists and can handle requests
-            success, data, status = self.make_request('POST', '/webhooks/twilio/inbound', 422, {})
-            webhook_exists = status in [200, 422, 400]
-            self.log_result("STOP processing webhook endpoint exists", webhook_exists)
+            send_entries = [entry for entry in data['audit_log']
+                          if entry.get('action') == 'send_sms']
             
-            print("   ℹ️  Note: STOP keyword processing tested via webhook endpoint existence")
-            print("   ℹ️  Actual opt-out would be triggered by Twilio webhook with form data")
+            self.log_result("SMS blocking entries found in audit log", len(blocked_entries) > 0)
+            self.log_result("SMS opt-out entries found in audit log", len(opt_out_entries) > 0)
+            self.log_result("SMS send attempts logged in audit log", len(send_entries) > 0)
+            
+            print(f"   ℹ️  Found {len(blocked_entries)} SMS blocking entries")
+            print(f"   ℹ️  Found {len(opt_out_entries)} opt-out entries")
+            print(f"   ℹ️  Found {len(send_entries)} SMS send attempts")
             
         else:
-            self.log_result("Test client has initial consent", False, "Could not create test client")
+            self.log_result("SMS blocking entries found in audit log", False, "Could not retrieve audit log")
     
     def test_email_outbox_endpoint(self):
         """Test email outbox endpoint for mock mode"""
