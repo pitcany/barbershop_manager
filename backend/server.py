@@ -849,6 +849,58 @@ async def mock_payment_page(session_id: str):
     raise HTTPException(status_code=400, detail="Not in mock mode")
 
 
+# ==================== SCHEDULED JOBS ENDPOINTS ====================
+
+@api_router.post("/jobs/reminders/run")
+async def run_reminder_job(shop: Shop = Depends(get_shop)):
+    """
+    Manually trigger the appointment reminder job.
+    Useful for testing or immediate execution.
+    """
+    from scheduled_jobs import AppointmentReminderJob
+    
+    job = AppointmentReminderJob(db, shop)
+    results = await job.run()
+    
+    return {
+        "status": "completed",
+        "results": results
+    }
+
+
+@api_router.get("/jobs/reminders/preview")
+async def preview_reminders(shop: Shop = Depends(get_shop)):
+    """
+    Preview which appointments would receive reminders.
+    Does not actually send any messages.
+    """
+    from scheduled_jobs import AppointmentReminderJob
+    
+    job = AppointmentReminderJob(db, shop)
+    appointments = await job.get_appointments_needing_reminder()
+    
+    # Enrich with client info
+    preview = []
+    for apt in appointments:
+        client = await db.clients.find_one(
+            {"id": apt["client_id"]},
+            {"_id": 0, "name": 1, "phone": 1, "sms_consent": 1}
+        )
+        preview.append({
+            "appointment_id": apt["id"],
+            "scheduled_at": apt["scheduled_at"],
+            "client_name": client.get("name") if client else "Unknown",
+            "client_phone": client.get("phone") if client else "Unknown",
+            "has_consent": client.get("sms_consent", False) if client else False
+        })
+    
+    return {
+        "reminder_window_hours": shop.confirmation_window_hours,
+        "appointments_needing_reminder": len(preview),
+        "preview": preview
+    }
+
+
 # ==================== EMAIL OUTBOX ENDPOINT ====================
 
 @api_router.get("/email-outbox")
