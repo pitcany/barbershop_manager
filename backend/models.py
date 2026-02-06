@@ -376,3 +376,27 @@ class IntegrationAuditLog(BaseModel):
     metadata: dict = Field(default_factory=dict)  # Additional context
     created_at: datetime = Field(default_factory=utc_now)
 
+
+# Recovered Revenue Events (Internal Instrumentation)
+class RevenueSource(str, Enum):
+    WAITLIST_FILL = "waitlist_fill"
+    NO_SHOW_FEE = "no_show_fee"
+
+
+class RecoveredRevenueEvent(BaseModel):
+    """
+    Immutable record of recovered revenue for internal attribution.
+    NOT surfaced in UI, dashboards, emails, or SMS.
+    """
+    model_config = ConfigDict(extra="ignore")
+    
+    id: str = Field(default_factory=generate_id)
+    shop_id: str
+    source: RevenueSource
+    appointment_id: Optional[str] = None
+    client_id: Optional[str] = None
+    amount: float
+    currency: str = "usd"
+    attributed_at: datetime = Field(default_factory=utc_now)
+    notes: Optional[str] = None  # Internal only (e.g., "mocked_execution=true")
+
