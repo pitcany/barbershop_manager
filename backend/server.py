@@ -843,6 +843,25 @@ async def list_email_outbox(shop: Shop = Depends(get_shop)):
     return {"emails": emails}
 
 
+@api_router.get("/audit-log")
+async def list_audit_log(
+    shop: Shop = Depends(get_shop),
+    provider: Optional[str] = None,
+    limit: int = 100
+):
+    """List integration audit log entries"""
+    query = {"shop_id": shop.id}
+    
+    if provider:
+        query["provider"] = provider
+    
+    entries = await db.integration_audit_log.find(
+        query, {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    
+    return {"audit_log": entries, "count": len(entries)}
+
+
 # ==================== HEALTH CHECK ====================
 
 @api_router.get("/")
