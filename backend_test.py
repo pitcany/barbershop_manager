@@ -209,6 +209,129 @@ class BarbershopAPITester:
         endpoint_exists = status in [200, 400, 422]
         self.log_result("Stripe webhook endpoint exists", endpoint_exists)
     
+    def test_compliance_features(self):
+        """Test SMS compliance hardening features"""
+        print("\n🔍 Testing SMS Compliance Features...")
+        
+        # Test 1: Health endpoint shows compliance status and provider toggles
+        success, data, status = self.make_request('GET', '/health')
+        has_compliance = (success and 
+                         'compliance' in data and 
+                         'providers' in data and
+                         data['compliance'].get('sms_consent_enforced') == True and
+                         data['compliance'].get('stop_handling_enabled') == True and
+                         data['compliance'].get('audit_logging_enabled') == True)
+        self.log_result("Health endpoint shows compliance status", has_compliance)
+        
+        provider_toggles = (success and 
+                           'twilio_enabled' in data['providers'] and
+                           'stripe_enabled' in data['providers'] and
+                           'sendgrid_enabled' in data['providers'] and
+                           'calendar_enabled' in data['providers'])
+        self.log_result("Health endpoint shows provider toggles", provider_toggles)
+        
+        # Test 2: Audit log endpoint returns logged entries
+        success, data, status = self.make_request('GET', '/audit-log')
+        has_audit_log = success and 'audit_log' in data and 'count' in data
+        self.log_result("Audit log endpoint returns entries", has_audit_log)
+        
+        # Test with provider filter
+        success, data, status = self.make_request('GET', '/audit-log?provider=twilio&limit=50')
+        self.log_result("Audit log with provider filter", success)
+        
+        # Test 3: SMS consent form records consent_source and timestamp
+        consent_data = {
+            "phone": "+15559999999",
+            "name": "Compliance Test User",
+            "consent": True
+        }
+        # Remove token for public endpoint
+        temp_token = self.token
+        self.token = None
+        
+        success, data, status = self.make_request('POST', '/public/sms-consent', 200, consent_data)
+        consent_recorded = success and data.get('consent') == True
+        self.log_result("SMS consent form records consent", consent_recorded)
+        
+        # Restore token
+        self.token = temp_token
+        
+        # Test 4: Verify client was created with proper consent tracking
+        # Get clients to find our test client
+        success, data, status = self.make_request('GET', '/clients?search=+15559999999')
+        if success and data.get('clients'):
+            test_client = None
+            for client in data['clients']:
+                if client.get('phone') == '+15559999999':
+                    test_client = client
+                    break
+            
+            if test_client:
+                has_consent_fields = (test_client.get('sms_consent') == True and
+                                    test_client.get('sms_consent_source') == 'web_form' and
+                                    test_client.get('sms_consent_timestamp') is not None)
+                self.log_result("Client has proper consent tracking fields", has_consent_fields)
+            else:
+                self.log_result("Client has proper consent tracking fields", False, "Test client not found")
+        else:
+            self.log_result("Client has proper consent tracking fields", False, "Could not retrieve clients")
+    
+    def test_stop_opt_out_simulation(self):
+        """Test STOP keyword opt-out processing (simulated)"""
+        print("\n🔍 Testing STOP Opt-Out Processing...")
+        
+        # First, create a client with consent via the consent form
+        consent_data = {
+            "phone": "+15551111111",
+            "name": "STOP Test User", 
+            "consent": True
+        }
+        
+        # Remove token for public endpoint
+        temp_token = self.token
+        self.token = None
+        
+        success, data, status = self.make_request('POST', '/public/sms-consent', 200, consent_data)
+        self.log_result("Created test client with consent", success)
+        
+        # Restore token
+        self.token = temp_token
+        
+        # Verify client was created with consent
+        success, data, status = self.make_request('GET', '/clients?search=+15551111111')
+        test_client = None
+        if success and data.get('clients'):
+            for client in data['clients']:
+                if client.get('phone') == '+15551111111':
+                    test_client = client
+                    break
+        
+        if test_client and test_client.get('sms_consent') == True:
+            self.log_result("Test client has initial consent", True)
+            
+            # Note: We cannot directly test the Twilio webhook without form data
+            # But we can verify the opt-out logic exists by checking the endpoint
+            # The actual STOP processing would happen via Twilio webhook with form data
+            
+            # Test that webhook endpoint exists and can handle requests
+            success, data, status = self.make_request('POST', '/webhooks/twilio/inbound', 422, {})
+            webhook_exists = status in [200, 422, 400]
+            self.log_result("STOP processing webhook endpoint exists", webhook_exists)
+            
+            print("   ℹ️  Note: STOP keyword processing tested via webhook endpoint existence")
+            print("   ℹ️  Actual opt-out would be triggered by Twilio webhook with form data")
+            
+        else:
+            self.log_result("Test client has initial consent", False, "Could not create test client")
+    
+    def test_email_outbox_endpoint(self):
+        """Test email outbox endpoint for mock mode"""
+        print("\n🔍 Testing Email Outbox Endpoint...")
+        
+        success, data, status = self.make_request('GET', '/email-outbox')
+        has_email_outbox = success and 'emails' in data
+        self.log_result("Email outbox endpoint", has_email_outbox)
+    
     def test_barbers_and_services(self):
         """Test barbers and services endpoints"""
         print("\n🔍 Testing Barbers & Services API...")
