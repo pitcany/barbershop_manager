@@ -530,6 +530,47 @@ async def send_test_email(request: SendTestEmailRequest, shop: Shop = Depends(ge
     if not send_emails:
         raise HTTPException(
             status_code=400,
+            detail="Email sending is disabled. Set SEND_EMAILS=true and configure SENDGRID_API_KEY."
+        )
+    
+    email_provider = get_email(db)
+    response = await email_provider.send_email(EmailMessage(
+        to=request.to_email,
+        subject=request.subject,
+        html_content=f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background-color: #D4AF37; padding: 20px; text-align: center;">
+                <h1 style="color: #000; margin: 0;">✂️ Barbershop Autopilot</h1>
+            </div>
+            <div style="padding: 30px; background-color: #18181b; color: #fafafa;">
+                <h2 style="color: #D4AF37;">Test Email</h2>
+                <p>{request.message}</p>
+                <hr style="border-color: #27272a; margin: 20px 0;">
+                <p style="color: #a1a1aa; font-size: 12px;">
+                    This email was sent from {shop.name} to verify SendGrid integration.
+                </p>
+            </div>
+        </body>
+        </html>
+        """,
+        plain_content=request.message
+    ))
+    
+    if not response.success:
+        raise HTTPException(status_code=500, detail=response.error or "Failed to send email")
+    
+    return {"message": "Test email sent", "message_id": response.message_id}
+
+
+@api_router.post("/email/send-test")
+async def send_test_email(request: SendTestEmailRequest, shop: Shop = Depends(get_shop)):
+    """Send a test email (only works when SEND_EMAILS=true)"""
+    send_emails = os.environ.get("SEND_EMAILS", "").lower() in ("true", "1", "yes")
+    
+    if not send_emails:
+        raise HTTPException(
+            status_code=400,
             detail="Email sending is disabled. Set SEND_EMAILS=true and configure SendGrid credentials."
         )
     
