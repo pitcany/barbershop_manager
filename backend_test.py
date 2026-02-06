@@ -354,6 +354,105 @@ class BarbershopAPITester:
         has_email_outbox = success and 'emails' in data
         self.log_result("Email outbox endpoint", has_email_outbox)
     
+    def test_recovered_revenue_logging(self):
+        """Test internal recovered revenue logging functionality"""
+        print("\n🔍 Testing Recovered Revenue Logging...")
+        
+        # Test 1: Internal recovered revenue endpoint exists
+        success, data, status = self.make_request('GET', '/internal/recovered-revenue')
+        endpoint_exists = success and 'events' in data
+        self.log_result("Internal recovered revenue endpoint exists", endpoint_exists)
+        
+        if not success:
+            self.log_result("Recovered revenue endpoint schema", False, f"Endpoint failed: {status}")
+            return
+        
+        # Test 2: Response includes _note indicating internal-only data
+        has_internal_note = '_note' in data and 'internal attribution only' in data['_note'].lower()
+        self.log_result("Response includes internal-only note", has_internal_note)
+        
+        # Test 3: Response has correct structure
+        has_correct_structure = (
+            'events' in data and 
+            'count' in data and 
+            isinstance(data['events'], list)
+        )
+        self.log_result("Response has correct structure", has_correct_structure)
+        
+        # Test 4: Check schema of events (if any exist)
+        events = data.get('events', [])
+        if events:
+            first_event = events[0]
+            required_fields = ['id', 'shop_id', 'source', 'amount', 'currency', 'attributed_at']
+            optional_fields = ['appointment_id', 'client_id', 'notes']
+            
+            has_required_fields = all(field in first_event for field in required_fields)
+            self.log_result("Events have required schema fields", has_required_fields)
+            
+            # Test 5: Check for mocked_execution=true in notes (since all providers are mocked)
+            has_mocked_note = any(
+                event.get('notes') and 'mocked_execution=true' in event.get('notes', '')
+                for event in events
+            )
+            self.log_result("Events include mocked_execution=true note", has_mocked_note)
+            
+            # Test 6: Verify no zero-amount events exist
+            zero_amount_events = [e for e in events if e.get('amount', 0) == 0]
+            no_zero_amount = len(zero_amount_events) == 0
+            self.log_result("No zero-amount events logged", no_zero_amount)
+            if zero_amount_events:
+                print(f"   ⚠️  Found {len(zero_amount_events)} zero-amount events")
+            
+            # Test 7: Check event sources are valid
+            valid_sources = ['waitlist_fill', 'no_show_fee']
+            invalid_sources = [e.get('source') for e in events if e.get('source') not in valid_sources]
+            sources_valid = len(invalid_sources) == 0
+            self.log_result("All event sources are valid", sources_valid)
+            if invalid_sources:
+                print(f"   ⚠️  Found invalid sources: {set(invalid_sources)}")
+            
+            print(f"   ℹ️  Found {len(events)} revenue events")
+            
+            # Show sample event for verification
+            if events:
+                sample_event = events[0]
+                print(f"   ℹ️  Sample event: {sample_event.get('source')} - ${sample_event.get('amount', 0):.2f}")
+        else:
+            print("   ℹ️  No revenue events found (this may be expected for new installations)")
+            self.log_result("Events have required schema fields", True, "No events to validate")
+            self.log_result("Events include mocked_execution=true note", True, "No events to validate")
+            self.log_result("No zero-amount events logged", True, "No events found")
+            self.log_result("All event sources are valid", True, "No events to validate")
+        
+        # Test 8: Test filtering by source parameter
+        success, filtered_data, status = self.make_request('GET', '/internal/recovered-revenue?source=waitlist_fill')
+        source_filter_works = success and 'events' in filtered_data
+        self.log_result("Source parameter filtering works", source_filter_works)
+        
+        if source_filter_works:
+            filtered_events = filtered_data.get('events', [])
+            # All events should have waitlist_fill source if filter worked
+            wrong_source_events = [e for e in filtered_events if e.get('source') != 'waitlist_fill']
+            filter_correct = len(wrong_source_events) == 0
+            self.log_result("Source filter returns correct events", filter_correct)
+            print(f"   ℹ️  Found {len(filtered_events)} waitlist_fill events")
+        
+        # Test 9: Test filtering by no_show_fee source
+        success, filtered_data, status = self.make_request('GET', '/internal/recovered-revenue?source=no_show_fee')
+        if success:
+            no_show_events = filtered_data.get('events', [])
+            wrong_source_events = [e for e in no_show_events if e.get('source') != 'no_show_fee']
+            no_show_filter_correct = len(wrong_source_events) == 0
+            self.log_result("No-show fee filter returns correct events", no_show_filter_correct)
+            print(f"   ℹ️  Found {len(no_show_events)} no_show_fee events")
+        
+        # Test 10: Test with invalid source parameter
+        success, invalid_data, status = self.make_request('GET', '/internal/recovered-revenue?source=invalid_source')
+        if success:
+            invalid_events = invalid_data.get('events', [])
+            no_invalid_events = len(invalid_events) == 0
+            self.log_result("Invalid source filter returns no events", no_invalid_events)
+    
     def test_barbers_and_services(self):
         """Test barbers and services endpoints"""
         print("\n🔍 Testing Barbers & Services API...")
