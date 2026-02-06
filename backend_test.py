@@ -367,6 +367,11 @@ class BarbershopAPITester:
         self.test_shop_api()
         self.test_barbers_and_services()
         
+        # Test compliance features (NEW)
+        self.test_compliance_features()
+        self.test_stop_opt_out_simulation()
+        self.test_email_outbox_endpoint()
+        
         # Test public endpoints
         self.test_public_endpoints()
         
