@@ -25,13 +25,20 @@ from models import (
     Shop, Barber, Service, Client, Appointment, Message, Waitlist, Payment, Event,
     AppointmentStatus, MessageDirection, EventType, PaymentStatus as PaymentStatusEnum,
     LoginRequest, TokenResponse, SMSConsentRequest, PolicyUpdate, SendTestSMSRequest,
-    SendTestEmailRequest, AdminUser, EmailOutbox
+    SendTestEmailRequest, AdminUser, EmailOutbox, AuditProvider, AuditAction
 )
 
 # Import providers and agents
 from providers import get_sms, get_email, get_payment, get_calendar
 from providers.interfaces import SMSMessage, EmailMessage
 from agents import FrontDeskAgent, NoShowEnforcementAgent, WaitlistFillAgent
+
+# Import compliance and audit services
+from audit import create_audit_logger
+from sms_compliance import (
+    SMSComplianceService, create_sms_service, 
+    is_opt_out_message, is_twilio_enabled
+)
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
