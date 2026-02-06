@@ -25,7 +25,8 @@ from models import (
     Shop, Barber, Service, Client, Appointment, Message, Waitlist, Payment, Event,
     AppointmentStatus, MessageDirection, EventType, PaymentStatus as PaymentStatusEnum,
     LoginRequest, TokenResponse, SMSConsentRequest, PolicyUpdate, SendTestSMSRequest,
-    SendTestEmailRequest, AdminUser, EmailOutbox, AuditProvider, AuditAction
+    SendTestEmailRequest, AdminUser, EmailOutbox, AuditProvider, AuditAction,
+    RevenueSource
 )
 
 # Import providers and agents
