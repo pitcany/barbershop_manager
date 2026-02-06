@@ -10,6 +10,51 @@ A production-grade MVP system to reduce no-shows and recover lost revenue for ba
 - **Revenue Tracking**: Dashboard showing recovered revenue and no-show metrics
 - **Admin Dashboard**: View conversations, manage appointments, and configure policies
 
+## SMS Compliance & Safety
+
+This system is designed for **one real barbershop MVP** and includes compliance safeguards:
+
+### Opt-In Requirements
+- **Explicit Consent Tracking**: All clients must have `sms_consent = true` before receiving any outbound SMS
+- **Consent Source Recorded**: Tracks how consent was obtained (`web_form`, `inbound_sms`, `manual`)
+- **Timestamp Tracking**: Records when consent was granted
+
+### STOP/Opt-Out Handling
+When a client texts `STOP`, `UNSUBSCRIBE`, or `CANCEL` (case-insensitive):
+1. Their consent is immediately revoked (`sms_consent = false`)
+2. One confirmation message is sent: *"You have been unsubscribed and will no longer receive messages."*
+3. All future outbound SMS to that client is suppressed
+
+### Provider Toggles (Environment Flags)
+All external integrations are gated behind environment flags (default: `false`):
+
+| Flag | Description |
+|------|-------------|
+| `TWILIO_ENABLED` | Enable/disable real SMS sending |
+| `STRIPE_ENABLED` | Enable/disable real payment processing |
+| `SEND_EMAILS` | Enable/disable real email sending (SendGrid) |
+| `CALENDAR_ENABLED` | Enable/disable Google Calendar integration |
+
+When disabled:
+- No external API calls are made
+- Business logic still executes
+- All attempts are recorded in the audit log
+
+### Integration Audit Log
+All external side effects are logged to `integration_audit_log`:
+- SMS sends (success or blocked)
+- Payment attempts
+- Calendar mutations
+- Email sends
+
+View the audit log via: `GET /api/audit-log`
+
+### Local Safety Guarantees
+The system can run locally via docker-compose with:
+- No API keys required
+- No outbound network calls
+- Deterministic behavior
+
 ## Quick Start
 
 ### Prerequisites
