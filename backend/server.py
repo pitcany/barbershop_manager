@@ -943,11 +943,12 @@ async def seed_demo_data():
     ]
     await db.services.insert_many(services)
     
-    # Create demo clients
+    # Create demo clients with proper consent tracking
+    consent_timestamp = datetime.now(timezone.utc).isoformat()
     clients = [
-        {"id": "client_1", "shop_id": shop_id, "name": "John Smith", "phone": "+15559876543", "email": "john@example.com", "sms_consent": True, "sms_consent_date": datetime.now(timezone.utc).isoformat(), "total_appointments": 5, "no_shows": 0, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
-        {"id": "client_2", "shop_id": shop_id, "name": "Mike Wilson", "phone": "+15551112222", "email": "mike@example.com", "sms_consent": True, "sms_consent_date": datetime.now(timezone.utc).isoformat(), "total_appointments": 3, "no_shows": 1, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
-        {"id": "client_3", "shop_id": shop_id, "name": "James Brown", "phone": "+15553334444", "email": "james@example.com", "sms_consent": True, "sms_consent_date": datetime.now(timezone.utc).isoformat(), "total_appointments": 8, "no_shows": 0, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "client_1", "shop_id": shop_id, "name": "John Smith", "phone": "+15559876543", "email": "john@example.com", "sms_consent": True, "sms_consent_timestamp": consent_timestamp, "sms_consent_source": "web_form", "total_appointments": 5, "no_shows": 0, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "client_2", "shop_id": shop_id, "name": "Mike Wilson", "phone": "+15551112222", "email": "mike@example.com", "sms_consent": True, "sms_consent_timestamp": consent_timestamp, "sms_consent_source": "web_form", "total_appointments": 3, "no_shows": 1, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "client_3", "shop_id": shop_id, "name": "James Brown", "phone": "+15553334444", "email": "james@example.com", "sms_consent": True, "sms_consent_timestamp": consent_timestamp, "sms_consent_source": "inbound_sms", "total_appointments": 8, "no_shows": 0, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
     ]
     await db.clients.insert_many(clients)
     
