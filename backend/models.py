@@ -333,3 +333,9 @@ class PolicyUpdate(BaseModel):
 class SendTestSMSRequest(BaseModel):
     to_phone: str
     message: str
+
+
+class SendTestEmailRequest(BaseModel):
+    to_email: str
+    subject: str = "Test Email from Barbershop Autopilot"
+    message: str = "This is a test email to verify SendGrid integration is working correctly."
