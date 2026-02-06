@@ -880,6 +880,36 @@ async def list_audit_log(
     return {"audit_log": entries, "count": len(entries)}
 
 
+@api_router.get("/internal/recovered-revenue")
+async def list_recovered_revenue_events(
+    shop: Shop = Depends(get_shop),
+    source: Optional[str] = None,
+    limit: int = 100
+):
+    """
+    Internal endpoint to query recovered revenue events.
+    NOT for UI display - for debugging and verification only.
+    """
+    query = {"shop_id": shop.id}
+    
+    if source:
+        query["source"] = source
+    
+    events = await db.recovered_revenue_events.find(
+        query, {"_id": 0}
+    ).sort("attributed_at", -1).limit(limit).to_list(limit)
+    
+    # Calculate totals for verification (NOT for display)
+    total_amount = sum(e.get("amount", 0) for e in events)
+    
+    return {
+        "events": events,
+        "count": len(events),
+        "_internal_total": total_amount,
+        "_note": "This data is for internal attribution only. NOT for owner-facing display."
+    }
+
+
 # ==================== HEALTH CHECK ====================
 
 @api_router.get("/")
