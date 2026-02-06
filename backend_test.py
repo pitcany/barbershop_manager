@@ -392,6 +392,7 @@ class BarbershopAPITester:
         # Test compliance features (NEW)
         self.test_compliance_features()
         self.test_stop_opt_out_simulation()
+        self.test_sms_blocking_compliance()
         self.test_email_outbox_endpoint()
         
         # Test public endpoints
