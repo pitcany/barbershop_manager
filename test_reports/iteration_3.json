@@ -1,0 +1,31 @@
+{
+  "summary": "Completed comprehensive testing of internal recovered revenue logging functionality. All backend API tests passed successfully.",
+  "backend_issues": {
+    "critical_bugs": [],
+    "flaky_endpoints": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Internal recovered revenue endpoint exists at GET /api/internal/recovered-revenue",
+    "Endpoint returns events with correct schema (id, shop_id, source, appointment_id, client_id, amount, currency, attributed_at, notes)",
+    "Events can be filtered by source parameter (waitlist_fill, no_show_fee)",
+    "Response includes _note indicating internal-only data",
+    "Events include mocked_execution=true note when providers are mocked",
+    "Zero-amount events are NOT logged (verified no events with amount=0)",
+    "Source filtering works correctly for both waitlist_fill and no_show_fee",
+    "Invalid source parameters return no events",
+    "All existing backend API functionality remains intact (44/44 tests passed)",
+    "Revenue events have proper UUIDs and timestamps",
+    "Events contain proper metadata (payment_id for no_show_fee events)"
+  ],
+  "test_report_links": ["/app/backend_test.py"],
+  "action_item_for_main_agent": "",
+  "updated_files": ["/app/backend_test.py"],
+  "success_percentage": "backend: 100%",
+  "should_call_test_agent_after_fix": "false",
+  "should_main_agent_test_itself": "true"
+}
