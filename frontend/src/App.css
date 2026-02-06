@@ -1,34 +1,78 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* App-specific styles */
+.App {
+  min-height: 100vh;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+/* Sidebar styles */
+.sidebar {
+  @apply bg-card border-r border-border h-screen sticky top-0 transition-all duration-300;
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.sidebar-link {
+  @apply flex items-center gap-3 px-4 py-3 text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors duration-200;
 }
 
-.App-link {
-    color: #61dafb;
+.sidebar-link.active {
+  @apply bg-primary/10 text-primary border-r-2 border-primary;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+/* Card styles */
+.stat-card {
+  @apply bg-card border border-border rounded-lg p-6 transition-colors duration-300 hover:border-primary/50;
+}
+
+/* Status badges */
+.status-badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.status-confirmed {
+  @apply bg-emerald-500/20 text-emerald-400;
+}
+
+.status-pending {
+  @apply bg-yellow-500/20 text-yellow-400;
+}
+
+.status-cancelled {
+  @apply bg-red-500/20 text-red-400;
+}
+
+.status-no-show {
+  @apply bg-red-500/20 text-red-400;
+}
+
+.status-completed {
+  @apply bg-blue-500/20 text-blue-400;
+}
+
+.status-deposit-pending {
+  @apply bg-orange-500/20 text-orange-400;
+}
+
+.status-deposit-paid {
+  @apply bg-emerald-500/20 text-emerald-400;
+}
+
+/* Message styles */
+.message-timestamp {
+  @apply text-xs text-muted-foreground;
+}
+
+/* Form styles */
+.form-input {
+  @apply bg-input/50 border-input focus:ring-1 focus:ring-primary focus:border-primary transition-all;
+}
+
+/* Revenue number styling */
+.revenue-number {
+  @apply font-mono font-medium text-2xl;
+}
+
+.revenue-positive {
+  @apply text-emerald-400;
+}
+
+.revenue-negative {
+  @apply text-red-400;
 }
