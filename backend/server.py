@@ -522,6 +522,30 @@ async def send_test_sms(request: SendTestSMSRequest, shop: Shop = Depends(get_sh
     return {"message": "Test SMS sent", "message_id": response.message_id}
 
 
+@api_router.post("/email/send-test")
+async def send_test_email(request: SendTestEmailRequest, shop: Shop = Depends(get_shop)):
+    """Send a test email (only works when SEND_EMAILS=true)"""
+    send_emails = os.environ.get("SEND_EMAILS", "").lower() in ("true", "1", "yes")
+    
+    if not send_emails:
+        raise HTTPException(
+            status_code=400,
+            detail="Email sending is disabled. Set SEND_EMAILS=true and configure SendGrid credentials."
+        )
+    
+    email = get_email()
+    response = await email.send_email(EmailMessage(
+        to=request.to_email,
+        subject=request.subject,
+        body=request.message
+    ))
+    
+    if not response.success:
+        raise HTTPException(status_code=500, detail=response.error or "Failed to send email")
+    
+    return {"message": "Test email sent", "message_id": response.message_id}
+
+
 # ==================== WEBHOOK ENDPOINTS ====================
 
 @api_router.post("/webhooks/twilio/inbound")
