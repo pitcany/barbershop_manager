@@ -695,13 +695,38 @@ async def stripe_webhook(request: Request):
     
     # Update payment status if we have a session_id
     if "session_id" in result:
-        await db.payments.update_one(
+        # Find the payment record
+        payment_record = await db.payments.find_one(
             {"stripe_session_id": result["session_id"]},
-            {"$set": {
-                "status": "completed" if result.get("payment_status") == "paid" else "failed",
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }}
+            {"_id": 0}
         )
+        
+        if payment_record and result.get("payment_status") == "paid":
+            # Update payment status
+            await db.payments.update_one(
+                {"stripe_session_id": result["session_id"]},
+                {"$set": {
+                    "status": "completed",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+            
+            # Hook: Log no-show fee revenue if applicable
+            if payment_record.get("appointment_id"):
+                appointment = await db.appointments.find_one(
+                    {"id": payment_record["appointment_id"]},
+                    {"_id": 0}
+                )
+                if appointment:
+                    await log_no_show_fee_on_payment_success(db, payment_record, appointment)
+        elif payment_record:
+            await db.payments.update_one(
+                {"stripe_session_id": result["session_id"]},
+                {"$set": {
+                    "status": "failed",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
     
     return JSONResponse(content={"status": "received"})
 
