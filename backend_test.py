@@ -494,6 +494,9 @@ class BarbershopAPITester:
         self.test_sms_blocking_compliance()
         self.test_email_outbox_endpoint()
         
+        # Test recovered revenue logging (NEW)
+        self.test_recovered_revenue_logging()
+        
         # Test public endpoints
         self.test_public_endpoints()
         
