@@ -342,7 +342,77 @@ class SendTestEmailRequest(BaseModel):
     message: str = "This is a test email to verify SendGrid integration is working correctly."
 
 
+# Integration Audit Log (Compliance & Observability)
+class AuditProvider(str, Enum):
+    TWILIO = "twilio"
+    STRIPE = "stripe"
+    SENDGRID = "sendgrid"
+    GOOGLE_CALENDAR = "google_calendar"
+
+
+class AuditAction(str, Enum):
+    SEND_SMS = "send_sms"
+    SMS_BLOCKED_NO_CONSENT = "sms_blocked_no_consent"
+    SMS_OPT_OUT = "sms_opt_out"
+    CHARGE_DEPOSIT = "charge_deposit"
+    CREATE_PAYMENT_LINK = "create_payment_link"
+    CALENDAR_CREATE = "calendar_create"
+    CALENDAR_UPDATE = "calendar_update"
+    CALENDAR_DELETE = "calendar_delete"
+    SEND_EMAIL = "send_email"
+
+
+class IntegrationAuditLog(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    
+    id: str = Field(default_factory=generate_id)
+    shop_id: str
+    provider: AuditProvider
+    action: AuditAction
+    entity_type: str  # client, appointment, payment
+    entity_id: Optional[str] = None
+    success: bool
+    error_message: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)  # Additional context
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class SendTestEmailRequest(BaseModel):
     to_email: str
     subject: str = "Test Email from Barbershop Autopilot"
     message: str = "This is a test email to verify SendGrid integration is working correctly."
+
+
+# Integration Audit Log (Compliance & Observability)
+class AuditProvider(str, Enum):
+    TWILIO = "twilio"
+    STRIPE = "stripe"
+    SENDGRID = "sendgrid"
+    GOOGLE_CALENDAR = "google_calendar"
+
+
+class AuditAction(str, Enum):
+    SEND_SMS = "send_sms"
+    SMS_BLOCKED_NO_CONSENT = "sms_blocked_no_consent"
+    SMS_OPT_OUT = "sms_opt_out"
+    CHARGE_DEPOSIT = "charge_deposit"
+    CREATE_PAYMENT_LINK = "create_payment_link"
+    CALENDAR_CREATE = "calendar_create"
+    CALENDAR_UPDATE = "calendar_update"
+    CALENDAR_DELETE = "calendar_delete"
+    SEND_EMAIL = "send_email"
+
+
+class IntegrationAuditLog(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    
+    id: str = Field(default_factory=generate_id)
+    shop_id: str
+    provider: AuditProvider
+    action: AuditAction
+    entity_type: str  # client, appointment, payment
+    entity_id: Optional[str] = None
+    success: bool
+    error_message: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)  # Additional context
+    created_at: datetime = Field(default_factory=utc_now)
