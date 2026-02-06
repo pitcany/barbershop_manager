@@ -129,9 +129,10 @@ class Client(BaseModel):
     phone: str  # Primary identifier for SMS
     email: Optional[str] = None
     
-    # SMS consent
+    # SMS consent (compliance required)
     sms_consent: bool = False
-    sms_consent_date: Optional[datetime] = None
+    sms_consent_timestamp: Optional[datetime] = None
+    sms_consent_source: Optional[str] = None  # e.g., "web_form", "inbound_sms", "manual"
     
     # Stripe customer
     stripe_customer_id: Optional[str] = None
