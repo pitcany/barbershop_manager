@@ -598,7 +598,7 @@ async def send_test_email(request: SendTestEmailRequest, shop: Shop = Depends(ge
 
 @api_router.post("/webhooks/twilio/inbound")
 async def twilio_inbound_webhook(request: Request):
-    """Handle inbound SMS from Twilio"""
+    """Handle inbound SMS from Twilio with compliance enforcement"""
     form_data = await request.form()
     
     from_number = form_data.get("From", "")
@@ -616,6 +616,10 @@ async def twilio_inbound_webhook(request: Request):
     
     shop = Shop(**shop_data)
     
+    # Initialize audit logger and SMS compliance service
+    audit_logger = create_audit_logger(db, shop.id)
+    sms_service = create_sms_service(db, shop.id, audit_logger)
+    
     # Find or create client
     client_data = await db.clients.find_one(
         {"shop_id": shop.id, "phone": from_number},
@@ -623,14 +627,15 @@ async def twilio_inbound_webhook(request: Request):
     )
     
     if not client_data:
-        # Create new client
+        # Create new client with consent (implied from inbound SMS)
         client_data = {
             "id": str(uuid.uuid4()),
             "shop_id": shop.id,
             "name": "New Client",
             "phone": from_number,
-            "sms_consent": True,  # Implied consent from inbound
-            "sms_consent_date": datetime.now(timezone.utc).isoformat(),
+            "sms_consent": True,  # Implied consent from inbound message
+            "sms_consent_timestamp": datetime.now(timezone.utc).isoformat(),
+            "sms_consent_source": "inbound_sms",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
@@ -650,7 +655,12 @@ async def twilio_inbound_webhook(request: Request):
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     
-    # Process with FrontDeskAgent
+    # ===== COMPLIANCE: Handle STOP/Opt-Out =====
+    if is_opt_out_message(body):
+        await sms_service.process_opt_out(client.id, from_number)
+        return JSONResponse(content={"status": "opt_out_processed"})
+    
+    # Process with FrontDeskAgent (business logic unchanged)
     agent = FrontDeskAgent(db, shop)
     response_text, metadata = await agent.process_inbound_message(client, body)
     
@@ -667,12 +677,12 @@ async def twilio_inbound_webhook(request: Request):
         logger.warning(f"Rate limit reached for client {client.id}")
         return JSONResponse(content={"status": "rate_limited"})
     
-    # Send response
-    sms = get_sms()
-    sms_response = await sms.send_sms(SMSMessage(
-        to=from_number,
-        body=response_text
-    ))
+    # ===== COMPLIANCE: Send response via SMS service (enforces consent) =====
+    sms_response = await sms_service.send_sms(
+        client_id=client.id,
+        to_phone=from_number,
+        message=response_text
+    )
     
     # Store outbound message
     await db.messages.insert_one({
