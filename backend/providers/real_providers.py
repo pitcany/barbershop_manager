@@ -61,12 +61,10 @@ class TwilioSMSProvider(SMSProvider):
             logger.error(f"[TWILIO] Failed to send SMS: {e}")
             return SMSResponse(success=False, error=str(e))
     
-    async def validate_webhook(self, request_body: bytes, signature: str) -> bool:
+    async def validate_webhook(self, url: str, params: dict, signature: str) -> bool:
         if not self.validator:
             return False
-        
-        # Note: Full validation requires URL and params
-        return True
+        return self.validator.validate(url, params, signature)
 
 
 class StripePaymentProvider(PaymentProvider):

@@ -2,10 +2,11 @@
 Database models for Barbershop Autopilot MVP
 Using MongoDB with Motor async driver
 """
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List
 from datetime import datetime, timezone, time
 from enum import Enum
+import re
 import uuid
 
 
@@ -316,10 +317,25 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+def _validate_e164_phone(v: str) -> str:
+    """Validate and normalize phone to E.164 format (+1XXXXXXXXXX)."""
+    digits = re.sub(r"[^\d+]", "", v)
+    if not digits.startswith("+"):
+        digits = "+" + digits
+    if not re.match(r"^\+\d{10,15}$", digits):
+        raise ValueError("Phone must be in E.164 format (e.g. +15551234567)")
+    return digits
+
+
 class SMSConsentRequest(BaseModel):
     phone: str
     name: str
     consent: bool
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _validate_e164_phone(v)
 
 
 class PolicyUpdate(BaseModel):
@@ -334,6 +350,11 @@ class PolicyUpdate(BaseModel):
 class SendTestSMSRequest(BaseModel):
     to_phone: str
     message: str
+
+    @field_validator("to_phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _validate_e164_phone(v)
 
 
 class SendTestEmailRequest(BaseModel):

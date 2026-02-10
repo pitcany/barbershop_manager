@@ -28,7 +28,7 @@ class SMSProvider(ABC):
         pass
     
     @abstractmethod
-    async def validate_webhook(self, request_body: bytes, signature: str) -> bool:
+    async def validate_webhook(self, url: str, params: dict, signature: str) -> bool:
         """Validate incoming webhook signature"""
         pass
 

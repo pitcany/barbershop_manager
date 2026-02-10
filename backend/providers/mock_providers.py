@@ -40,7 +40,7 @@ class MockSMSProvider(SMSProvider):
             message_id=message_id
         )
     
-    async def validate_webhook(self, request_body: bytes, signature: str) -> bool:
+    async def validate_webhook(self, url: str, params: dict, signature: str) -> bool:
         # Mock always validates
         return True
 

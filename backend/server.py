@@ -12,6 +12,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
+import re
+import time
 import uuid
 import jwt
 from passlib.context import CryptContext
@@ -76,6 +78,28 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 
+# ==================== RATE LIMITING ====================
+
+_rate_limit_store: Dict[str, List[float]] = {}
+
+def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
+    """Returns True if request is allowed, False if rate limited."""
+    now = time.time()
+    if key not in _rate_limit_store:
+        _rate_limit_store[key] = []
+    # Remove expired entries
+    _rate_limit_store[key] = [t for t in _rate_limit_store[key] if now - t < window_seconds]
+    if not _rate_limit_store[key]:
+        del _rate_limit_store[key]
+    if key not in _rate_limit_store:
+        _rate_limit_store[key] = [now]
+        return True
+    if len(_rate_limit_store[key]) >= max_requests:
+        return False
+    _rate_limit_store[key].append(now)
+    return True
+
+
 # ==================== AUTH UTILITIES ====================
 
 def create_access_token(data: dict) -> str:
@@ -119,10 +143,14 @@ async def get_shop(user: dict = Depends(get_current_user)) -> Shop:
 # ==================== AUTH ENDPOINTS ====================
 
 @api_router.post("/auth/login", response_model=TokenResponse)
-async def login(request: LoginRequest):
+async def login(request: LoginRequest, raw_request: Request):
     """Admin login"""
+    client_ip = raw_request.client.host if raw_request.client else "unknown"
+    if not check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
+
     admin = await db.admin_users.find_one({"username": request.username}, {"_id": 0})
-    
+
     if not admin or not pwd_context.verify(request.password, admin["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
@@ -301,20 +329,31 @@ async def list_appointments(
         query["status"] = status
     
     if date:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            raise HTTPException(status_code=400, detail="Date must be in YYYY-MM-DD format")
         query["scheduled_at"] = {"$gte": date, "$lt": f"{date}T23:59:59"}
     
     appointments = await db.appointments.find(
         query, {"_id": 0}
     ).sort("scheduled_at", -1).skip(skip).limit(limit).to_list(limit)
     
-    # Enrich with client and service info
+    # Batch fetch related entities to avoid N+1 queries
+    client_ids = list({apt["client_id"] for apt in appointments if apt.get("client_id")})
+    service_ids = list({apt["service_id"] for apt in appointments if apt.get("service_id")})
+    barber_ids = list({apt["barber_id"] for apt in appointments if apt.get("barber_id")})
+
+    clients_list = await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(len(client_ids)) if client_ids else []
+    services_list = await db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(service_ids)) if service_ids else []
+    barbers_list = await db.barbers.find({"id": {"$in": barber_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(barber_ids)) if barber_ids else []
+
+    clients_map = {c["id"]: {"name": c.get("name"), "phone": c.get("phone")} for c in clients_list}
+    services_map = {s["id"]: {"name": s.get("name")} for s in services_list}
+    barbers_map = {b["id"]: {"name": b.get("name")} for b in barbers_list}
+
     for apt in appointments:
-        client = await db.clients.find_one({"id": apt["client_id"]}, {"_id": 0, "name": 1, "phone": 1})
-        service = await db.services.find_one({"id": apt["service_id"]}, {"_id": 0, "name": 1})
-        barber = await db.barbers.find_one({"id": apt["barber_id"]}, {"_id": 0, "name": 1})
-        apt["client"] = client
-        apt["service"] = service
-        apt["barber"] = barber
+        apt["client"] = clients_map.get(apt.get("client_id"))
+        apt["service"] = services_map.get(apt.get("service_id"))
+        apt["barber"] = barbers_map.get(apt.get("barber_id"))
     
     total = await db.appointments.count_documents(query)
     
@@ -373,9 +412,10 @@ async def list_clients(
     query = {"shop_id": shop.id}
     
     if search:
+        escaped_search = re.escape(search)
         query["$or"] = [
-            {"name": {"$regex": search, "$options": "i"}},
-            {"phone": {"$regex": search}}
+            {"name": {"$regex": escaped_search, "$options": "i"}},
+            {"phone": {"$regex": escaped_search}}
         ]
     
     clients = await db.clients.find(
@@ -423,13 +463,13 @@ async def list_conversations(shop: Shop = Depends(get_shop), limit: int = 50):
     
     threads = await db.messages.aggregate(pipeline).to_list(limit)
     
-    # Enrich with client info
+    # Batch fetch client info to avoid N+1 queries
+    thread_client_ids = [thread["_id"] for thread in threads]
+    clients_list = await db.clients.find({"id": {"$in": thread_client_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(len(thread_client_ids)) if thread_client_ids else []
+    clients_map = {c["id"]: {"name": c.get("name"), "phone": c.get("phone")} for c in clients_list}
+
     for thread in threads:
-        client = await db.clients.find_one(
-            {"id": thread["_id"]},
-            {"_id": 0, "name": 1, "phone": 1}
-        )
-        thread["client"] = client
+        thread["client"] = clients_map.get(thread["_id"])
         thread["client_id"] = thread.pop("_id")
     
     return {"conversations": threads}
@@ -464,12 +504,19 @@ async def list_waitlist(shop: Shop = Depends(get_shop)):
         {"_id": 0}
     ).sort("created_at", 1).to_list(100)
     
-    # Enrich with client and service info
+    # Batch fetch related entities to avoid N+1 queries
+    client_ids = list({e["client_id"] for e in entries if e.get("client_id")})
+    service_ids = list({e["service_id"] for e in entries if e.get("service_id")})
+
+    clients_list = await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(len(client_ids)) if client_ids else []
+    services_list = await db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(service_ids)) if service_ids else []
+
+    clients_map = {c["id"]: {"name": c.get("name"), "phone": c.get("phone")} for c in clients_list}
+    services_map = {s["id"]: {"name": s.get("name")} for s in services_list}
+
     for entry in entries:
-        client = await db.clients.find_one({"id": entry["client_id"]}, {"_id": 0, "name": 1, "phone": 1})
-        service = await db.services.find_one({"id": entry["service_id"]}, {"_id": 0, "name": 1})
-        entry["client"] = client
-        entry["service"] = service
+        entry["client"] = clients_map.get(entry.get("client_id"))
+        entry["service"] = services_map.get(entry.get("service_id"))
     
     return {"waitlist": entries}
 
@@ -582,12 +629,27 @@ async def send_test_email(request: SendTestEmailRequest, shop: Shop = Depends(ge
 async def twilio_inbound_webhook(request: Request):
     """Handle inbound SMS from Twilio with compliance enforcement"""
     form_data = await request.form()
-    
+
+    # Validate Twilio webhook signature when Twilio is enabled
+    if is_twilio_enabled():
+        signature = request.headers.get("X-Twilio-Signature", "")
+        # Use configured base URL if behind a reverse proxy, otherwise use request URL
+        base_url = os.environ.get("TWILIO_WEBHOOK_BASE_URL")
+        if base_url:
+            webhook_url = base_url.rstrip("/") + request.url.path
+        else:
+            webhook_url = str(request.url)
+        form_params = {k: v for k, v in form_data.items()}
+        sms_provider = get_sms()
+        if not await sms_provider.validate_webhook(webhook_url, form_params, signature):
+            logger.warning("Twilio webhook signature validation failed")
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
     from_number = form_data.get("From", "")
     to_number = form_data.get("To", "")
     body = form_data.get("Body", "")
     message_sid = form_data.get("MessageSid", "")
-    
+
     logger.info(f"Inbound SMS from {from_number}: {body[:50]}...")
     
     # Find shop by phone number
@@ -735,8 +797,12 @@ async def stripe_webhook(request: Request):
 # ==================== PUBLIC ENDPOINTS (NO AUTH) ====================
 
 @api_router.post("/public/sms-consent")
-async def submit_sms_consent(request: SMSConsentRequest):
+async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
     """Public endpoint for SMS consent form (compliance-compliant)"""
+    client_ip = raw_request.client.host if raw_request.client else "unknown"
+    if not check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
+
     # Find shop (using first shop for MVP)
     shop_data = await db.shops.find_one({}, {"_id": 0})
     if not shop_data:
@@ -994,12 +1060,16 @@ async def health_check():
 app.include_router(api_router)
 
 # CORS middleware
+cors_origins = [o.strip() for o in os.environ.get('CORS_ORIGINS', '*').split(',')]
+allow_creds = cors_origins != ["*"]
+if not allow_creds:
+    logger.warning("CORS_ORIGINS not set — credentials disabled. Set explicit origins for production.")
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=allow_creds,
+    allow_origins=cors_origins,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 
