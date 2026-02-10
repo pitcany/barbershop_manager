@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".cursor/hooks/skill-instructions-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
