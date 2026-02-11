@@ -12,6 +12,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 import re
 import time
 import uuid
@@ -28,7 +29,8 @@ from models import (
     AppointmentStatus, MessageDirection, EventType, PaymentStatus as PaymentStatusEnum,
     LoginRequest, TokenResponse, SMSConsentRequest, PolicyUpdate, SendTestSMSRequest,
     SendTestEmailRequest, AdminUser, EmailOutbox, AuditProvider, AuditAction,
-    RevenueSource
+    RevenueSource, CreateAppointmentRequest, CreateClientRequest, UpdateClientRequest,
+    CreateWaitlistRequest
 )
 
 # Import providers and agents
@@ -97,6 +99,16 @@ def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
     if len(_rate_limit_store[key]) >= max_requests:
         return False
     _rate_limit_store[key].append(now)
+
+    # Periodic cleanup: prune stale keys when store grows large
+    if len(_rate_limit_store) > 10000:
+        stale_keys = [
+            k for k, timestamps in _rate_limit_store.items()
+            if all(now - t > window_seconds for t in timestamps)
+        ]
+        for k in stale_keys:
+            del _rate_limit_store[k]
+
     return True
 
 
@@ -207,7 +219,18 @@ async def update_shop_policy(update: PolicyUpdate, shop: Shop = Depends(get_shop
 async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
     """Get dashboard statistics"""
     now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Use shop timezone for "today" boundary
+    shop_tz_name = getattr(shop, "timezone", None) or "UTC"
+    try:
+        shop_tz = ZoneInfo(shop_tz_name)
+    except (KeyError, Exception):
+        shop_tz = timezone.utc
+
+    local_now = now.astimezone(shop_tz)
+    today_start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_start_local.astimezone(timezone.utc)
+
     week_start = today_start - timedelta(days=7)
     month_start = today_start - timedelta(days=30)
     
@@ -303,13 +326,26 @@ async def get_revenue_chart(shop: Shop = Depends(get_shop), days: int = 30):
     ]
     
     results = await db.events.aggregate(pipeline).to_list(100)
-    
-    return {
-        "data": [
-            {"date": r["_id"], "recovered": r["recovered"], "lost": r["lost"]}
-            for r in results
-        ]
+
+    # Build lookup from aggregation results
+    data_by_date = {
+        r["_id"]: {"date": r["_id"], "recovered": r["recovered"], "lost": r["lost"]}
+        for r in results
     }
+
+    # Fill gaps: ensure every date in the range has an entry
+    filled_data = []
+    current_day = start_date.date()
+    end_day = now.date()
+    while current_day <= end_day:
+        date_str = current_day.isoformat()
+        if date_str in data_by_date:
+            filled_data.append(data_by_date[date_str])
+        else:
+            filled_data.append({"date": date_str, "recovered": 0, "lost": 0})
+        current_day += timedelta(days=1)
+
+    return {"data": filled_data}
 
 
 # ==================== APPOINTMENT ENDPOINTS ====================
@@ -374,17 +410,62 @@ async def get_appointment(appointment_id: str, shop: Shop = Depends(get_shop)):
     return appointment
 
 
+ALLOWED_TRANSITIONS = {
+    "pending": {"confirmed", "cancelled", "deposit_pending"},
+    "confirmed": {"completed", "cancelled", "no_show", "rescheduled"},
+    "deposit_pending": {"deposit_paid", "cancelled"},
+    "deposit_paid": {"confirmed", "completed", "cancelled", "no_show"},
+    "rescheduled": {"pending", "confirmed", "cancelled"},
+    # Terminal states — no outgoing transitions
+    "completed": set(),
+    "no_show": set(),
+    "cancelled": set(),
+}
+
+
 @api_router.patch("/appointments/{appointment_id}/status")
 async def update_appointment_status(
     appointment_id: str,
     status: str,
     shop: Shop = Depends(get_shop)
 ):
-    """Update appointment status"""
+    """Update appointment status with state machine validation."""
     valid_statuses = [s.value for s in AppointmentStatus]
     if status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
-    
+
+    # Fetch current appointment to check current status
+    appointment = await db.appointments.find_one(
+        {"id": appointment_id, "shop_id": shop.id},
+        {"_id": 0}
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    current_status = appointment.get("status", "pending")
+
+    # Validate transition
+    allowed = ALLOWED_TRANSITIONS.get(current_status, set())
+    if status not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot transition from '{current_status}' to '{status}'. Allowed: {sorted(allowed) if allowed else 'none (terminal state)'}"
+        )
+
+    # For no_show and completed: scheduled_at must be in the past
+    if status in ("no_show", "completed"):
+        scheduled_at = appointment.get("scheduled_at", "")
+        if scheduled_at:
+            try:
+                scheduled_dt = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+                if scheduled_dt > datetime.now(timezone.utc):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot mark as '{status}' — appointment is still in the future"
+                    )
+            except (ValueError, TypeError):
+                pass  # If date is unparseable, allow the transition
+
     result = await db.appointments.update_one(
         {"id": appointment_id, "shop_id": shop.id},
         {"$set": {
@@ -392,11 +473,93 @@ async def update_appointment_status(
             "updated_at": datetime.now(timezone.utc).isoformat()
         }}
     )
-    
+
     if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    
+        raise HTTPException(status_code=404, detail="Appointment not found or status unchanged")
+
+    # Trigger agents (non-blocking — errors logged, not raised)
+    try:
+        if status == "cancelled":
+            waitlist_agent = WaitlistFillAgent(db, shop)
+            await waitlist_agent.process_cancellation(appointment_id)
+        elif status == "no_show":
+            noshow_agent = NoShowEnforcementAgent(db, shop)
+            await noshow_agent.process_no_show(appointment_id)
+    except Exception as e:
+        logger.error(f"Agent trigger failed for {appointment_id} -> {status}: {e}")
+
     return {"message": "Status updated"}
+
+
+@api_router.post("/appointments")
+async def create_appointment(
+    body: CreateAppointmentRequest,
+    shop: Shop = Depends(get_shop)
+):
+    """Create a new appointment."""
+    # Validate client exists
+    client = await db.clients.find_one(
+        {"id": body.client_id, "shop_id": shop.id}, {"_id": 0, "id": 1}
+    )
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # Validate barber exists
+    barber = await db.barbers.find_one(
+        {"id": body.barber_id, "shop_id": shop.id}, {"_id": 0, "id": 1}
+    )
+    if not barber:
+        raise HTTPException(status_code=404, detail="Barber not found")
+
+    # Validate service exists
+    service = await db.services.find_one(
+        {"id": body.service_id, "shop_id": shop.id}, {"_id": 0, "id": 1, "duration_minutes": 1, "price": 1}
+    )
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    # Parse scheduled_at
+    try:
+        scheduled_dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid scheduled_at format — use ISO 8601")
+
+    if scheduled_dt < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
+
+    duration = body.duration_minutes or service.get("duration_minutes", 30)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Check deposit requirement
+    initial_status = "pending"
+    try:
+        noshow_agent = NoShowEnforcementAgent(db, shop)
+        deposit_required = await noshow_agent.check_deposit_requirement(body.client_id)
+        if deposit_required:
+            initial_status = "deposit_pending"
+    except Exception as e:
+        logger.error(f"Deposit check failed: {e}")
+
+    appointment_id = str(uuid.uuid4())
+    appointment = {
+        "id": appointment_id,
+        "shop_id": shop.id,
+        "client_id": body.client_id,
+        "barber_id": body.barber_id,
+        "service_id": body.service_id,
+        "scheduled_at": scheduled_dt.isoformat(),
+        "duration_minutes": duration,
+        "status": initial_status,
+        "notes": body.notes or "",
+        "price": service.get("price", 0),
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+    await db.appointments.insert_one(appointment)
+    appointment.pop("_id", None)
+
+    return appointment
 
 
 # ==================== CLIENT ENDPOINTS ====================
@@ -439,6 +602,85 @@ async def get_client(client_id: str, shop: Shop = Depends(get_shop)):
         raise HTTPException(status_code=404, detail="Client not found")
     
     return client
+
+
+@api_router.post("/clients")
+async def create_client(
+    body: CreateClientRequest,
+    shop: Shop = Depends(get_shop)
+):
+    """Create a new client."""
+    # Check for duplicate phone
+    existing = await db.clients.find_one(
+        {"phone": body.phone, "shop_id": shop.id}, {"_id": 0, "id": 1}
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="A client with this phone number already exists")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    client_id = str(uuid.uuid4())
+    client = {
+        "id": client_id,
+        "shop_id": shop.id,
+        "name": body.name,
+        "phone": body.phone,
+        "email": body.email or "",
+        "sms_consent": body.sms_consent,
+        "sms_consent_timestamp": now_iso if body.sms_consent else None,
+        "sms_consent_source": "admin_created" if body.sms_consent else None,
+        "no_show_count": 0,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+    await db.clients.insert_one(client)
+    client.pop("_id", None)
+
+    return client
+
+
+@api_router.patch("/clients/{client_id}")
+async def update_client(
+    client_id: str,
+    body: UpdateClientRequest,
+    shop: Shop = Depends(get_shop)
+):
+    """Update an existing client."""
+    existing = await db.clients.find_one(
+        {"id": client_id, "shop_id": shop.id}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    updates = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.phone is not None and body.phone != existing.get("phone"):
+        # Check for duplicate phone
+        dup = await db.clients.find_one(
+            {"phone": body.phone, "shop_id": shop.id, "id": {"$ne": client_id}},
+            {"_id": 0, "id": 1}
+        )
+        if dup:
+            raise HTTPException(status_code=409, detail="A client with this phone number already exists")
+        updates["phone"] = body.phone
+    if body.email is not None:
+        updates["email"] = body.email
+
+    if not updates:
+        return existing
+
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    await db.clients.update_one(
+        {"id": client_id, "shop_id": shop.id},
+        {"$set": updates}
+    )
+
+    updated = await db.clients.find_one(
+        {"id": client_id, "shop_id": shop.id}, {"_id": 0}
+    )
+    return updated
 
 
 # ==================== CONVERSATION ENDPOINTS ====================
@@ -519,6 +761,61 @@ async def list_waitlist(shop: Shop = Depends(get_shop)):
         entry["service"] = services_map.get(entry.get("service_id"))
     
     return {"waitlist": entries}
+
+
+@api_router.post("/waitlist")
+async def create_waitlist_entry(
+    body: CreateWaitlistRequest,
+    shop: Shop = Depends(get_shop)
+):
+    """Add a client to the waitlist."""
+    # Validate client
+    client = await db.clients.find_one(
+        {"id": body.client_id, "shop_id": shop.id}, {"_id": 0, "id": 1}
+    )
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # Validate service
+    service = await db.services.find_one(
+        {"id": body.service_id, "shop_id": shop.id}, {"_id": 0, "id": 1}
+    )
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    # Validate barber if provided
+    if body.barber_id:
+        barber = await db.barbers.find_one(
+            {"id": body.barber_id, "shop_id": shop.id}, {"_id": 0, "id": 1}
+        )
+        if not barber:
+            raise HTTPException(status_code=404, detail="Barber not found")
+
+    # Parse preferred_date
+    try:
+        preferred_dt = datetime.fromisoformat(body.preferred_date.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid preferred_date format — use ISO 8601")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    entry_id = str(uuid.uuid4())
+    entry = {
+        "id": entry_id,
+        "shop_id": shop.id,
+        "client_id": body.client_id,
+        "service_id": body.service_id,
+        "barber_id": body.barber_id,
+        "preferred_date": preferred_dt.isoformat(),
+        "flexible_hours": body.flexible_hours,
+        "active": True,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+    await db.waitlist.insert_one(entry)
+    entry.pop("_id", None)
+
+    return entry
 
 
 @api_router.delete("/waitlist/{entry_id}")
@@ -679,7 +976,7 @@ async def twilio_inbound_webhook(request: Request):
             "phone": from_number,
             "sms_consent": True,  # Implied consent from inbound message
             "sms_consent_timestamp": datetime.now(timezone.utc).isoformat(),
-            "sms_consent_source": "inbound_sms",
+            "sms_consent_source": "implied_inbound",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
@@ -1203,7 +1500,7 @@ async def seed_demo_data():
         {"id": "msg_1", "shop_id": shop_id, "client_id": "client_1", "direction": MessageDirection.INBOUND.value, "message_type": "sms", "content": "Hi, I'd like to book a haircut", "created_at": (now - timedelta(hours=2)).isoformat()},
         {"id": "msg_2", "shop_id": shop_id, "client_id": "client_1", "direction": MessageDirection.OUTBOUND.value, "message_type": "sms", "content": "Hi John! Thanks for reaching out to Classic Cuts Barbershop. We have availability today at 2pm or 4pm. Which works for you?", "created_at": (now - timedelta(hours=1, minutes=55)).isoformat()},
         {"id": "msg_3", "shop_id": shop_id, "client_id": "client_1", "direction": MessageDirection.INBOUND.value, "message_type": "sms", "content": "2pm works great", "created_at": (now - timedelta(hours=1, minutes=50)).isoformat()},
-        {"id": "msg_4", "shop_id": shop_id, "client_id": "client_1", "direction": MessageDirection.OUTBOUND.value, "message_type": "sms", "content": "Your appointment is confirmed! 📅 Today at 2:00 PM ✂️ Classic Haircut with Marcus Johnson. Reply CONFIRM to confirm or CANCEL to cancel.", "created_at": (now - timedelta(hours=1, minutes=45)).isoformat()},
+        {"id": "msg_4", "shop_id": shop_id, "client_id": "client_1", "direction": MessageDirection.OUTBOUND.value, "message_type": "sms", "content": "Your appointment is confirmed! 📅 Today at 2:00 PM ✂️ Classic Haircut with Marcus Johnson. Reply YES to confirm or NO to cancel.", "created_at": (now - timedelta(hours=1, minutes=45)).isoformat()},
     ]
     await db.messages.insert_many(messages)
     

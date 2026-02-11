@@ -45,6 +45,7 @@ const statusOptions = [
   { value: "completed", label: "Completed" },
   { value: "cancelled", label: "Cancelled" },
   { value: "no_show", label: "No Show" },
+  { value: "rescheduled", label: "Rescheduled" },
 ];
 
 const statusColors = {

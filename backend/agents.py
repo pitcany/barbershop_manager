@@ -27,7 +27,7 @@ class MessageTemplates:
         "📅 {date} at {time}\n"
         "✂️ {service} with {barber}\n"
         "📍 {address}\n\n"
-        "Reply CONFIRM to confirm or CANCEL to cancel."
+        "Reply YES to confirm or NO to cancel."
     )
     
     DEPOSIT_REQUEST = (
