@@ -83,18 +83,24 @@ api_router = APIRouter(prefix="/api")
 # ==================== RATE LIMITING ====================
 
 _rate_limit_store: Dict[str, List[float]] = {}
+_rate_limit_windows: Dict[str, int] = {}
 
 def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
     """Returns True if request is allowed, False if rate limited."""
     now = time.time()
     if key not in _rate_limit_store:
         _rate_limit_store[key] = []
+        _rate_limit_windows[key] = window_seconds
+    elif key not in _rate_limit_windows:
+        _rate_limit_windows[key] = window_seconds
     # Remove expired entries
     _rate_limit_store[key] = [t for t in _rate_limit_store[key] if now - t < window_seconds]
     if not _rate_limit_store[key]:
         del _rate_limit_store[key]
+        _rate_limit_windows.pop(key, None)
     if key not in _rate_limit_store:
         _rate_limit_store[key] = [now]
+        _rate_limit_windows[key] = window_seconds
         return True
     if len(_rate_limit_store[key]) >= max_requests:
         return False
@@ -104,10 +110,11 @@ def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
     if len(_rate_limit_store) > 10000:
         stale_keys = [
             k for k, timestamps in _rate_limit_store.items()
-            if all(now - t > window_seconds for t in timestamps)
+            if all(now - t > _rate_limit_windows.get(k, window_seconds) for t in timestamps)
         ]
         for k in stale_keys:
             del _rate_limit_store[k]
+            _rate_limit_windows.pop(k, None)
 
     return True
 
@@ -499,7 +506,7 @@ async def create_appointment(
     """Create a new appointment."""
     # Validate client exists
     client = await db.clients.find_one(
-        {"id": body.client_id, "shop_id": shop.id}, {"_id": 0, "id": 1}
+        {"id": body.client_id, "shop_id": shop.id}, {"_id": 0, "id": 1, "no_shows": 1}
     )
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -521,11 +528,12 @@ async def create_appointment(
     # Parse scheduled_at
     try:
         scheduled_dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+        if scheduled_dt.tzinfo is None:
+            scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
+        if scheduled_dt < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid scheduled_at format — use ISO 8601")
-
-    if scheduled_dt < datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
 
     duration = body.duration_minutes or service.get("duration_minutes", 30)
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -534,7 +542,10 @@ async def create_appointment(
     initial_status = "pending"
     try:
         noshow_agent = NoShowEnforcementAgent(db, shop)
-        deposit_required = await noshow_agent.check_deposit_requirement(body.client_id)
+        deposit_required = await noshow_agent.check_deposit_requirement(
+            {"scheduled_at": scheduled_dt.isoformat()},
+            client
+        )
         if deposit_required:
             initial_status = "deposit_pending"
     except Exception as e:
@@ -628,7 +639,7 @@ async def create_client(
         "sms_consent": body.sms_consent,
         "sms_consent_timestamp": now_iso if body.sms_consent else None,
         "sms_consent_source": "admin_created" if body.sms_consent else None,
-        "no_show_count": 0,
+        "no_shows": 0,
         "created_at": now_iso,
         "updated_at": now_iso,
     }
