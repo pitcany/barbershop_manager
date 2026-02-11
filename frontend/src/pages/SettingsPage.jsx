@@ -61,6 +61,23 @@ export default function SettingsPage() {
   };
 
   const handleSave = async () => {
+    // Client-side validation
+    if (formData.deposit_amount < 0) {
+      toast.error("Deposit amount must be $0 or more"); return;
+    }
+    if (formData.deposit_required_hours < 1) {
+      toast.error("Deposit required hours must be at least 1"); return;
+    }
+    if (formData.confirmation_window_hours < 1) {
+      toast.error("Confirmation window must be at least 1 hour"); return;
+    }
+    if (formData.cancellation_window_hours < 0) {
+      toast.error("Cancellation window cannot be negative"); return;
+    }
+    if (formData.max_messages_per_day < 1) {
+      toast.error("Max messages per day must be at least 1"); return;
+    }
+
     setSaving(true);
     try {
       await axios.patch(`${API}/shop/policy`, formData);
@@ -174,6 +191,7 @@ export default function SettingsPage() {
                     data-testid="deposit-amount-input"
                     type="number"
                     step="0.01"
+                    min="0"
                     value={formData.deposit_amount}
                     onChange={(e) => setFormData(prev => ({ ...prev, deposit_amount: parseFloat(e.target.value) }))}
                     className="bg-input/50 border-input"
@@ -187,6 +205,7 @@ export default function SettingsPage() {
                     id="deposit_required_hours"
                     data-testid="deposit-hours-input"
                     type="number"
+                    min="1"
                     value={formData.deposit_required_hours}
                     onChange={(e) => setFormData(prev => ({ ...prev, deposit_required_hours: parseInt(e.target.value) }))}
                     className="bg-input/50 border-input"
@@ -212,6 +231,7 @@ export default function SettingsPage() {
                     id="confirmation_window"
                     data-testid="confirmation-hours-input"
                     type="number"
+                    min="1"
                     value={formData.confirmation_window_hours}
                     onChange={(e) => setFormData(prev => ({ ...prev, confirmation_window_hours: parseInt(e.target.value) }))}
                     className="bg-input/50 border-input"
@@ -225,6 +245,7 @@ export default function SettingsPage() {
                     id="cancellation_window"
                     data-testid="cancellation-hours-input"
                     type="number"
+                    min="0"
                     value={formData.cancellation_window_hours}
                     onChange={(e) => setFormData(prev => ({ ...prev, cancellation_window_hours: parseInt(e.target.value) }))}
                     className="bg-input/50 border-input"
@@ -249,6 +270,7 @@ export default function SettingsPage() {
                   id="max_messages"
                   data-testid="max-messages-input"
                   type="number"
+                  min="1"
                   value={formData.max_messages_per_day}
                   onChange={(e) => setFormData(prev => ({ ...prev, max_messages_per_day: parseInt(e.target.value) }))}
                   className="bg-input/50 border-input max-w-xs"

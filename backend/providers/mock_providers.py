@@ -132,8 +132,9 @@ class MockCalendarProvider(CalendarProvider):
 class MockEmailProvider(EmailProvider):
     """Mock email provider that logs emails to console"""
     
-    def __init__(self, db=None):
+    def __init__(self, db=None, shop_id: str = "demo_shop"):
         self.db = db
+        self.shop_id = shop_id
         self.sent_emails: List[Dict] = []
     
     async def send_email(self, message: EmailMessage) -> EmailResponse:
@@ -155,7 +156,7 @@ class MockEmailProvider(EmailProvider):
             try:
                 await self.db.email_outbox.insert_one({
                     "id": message_id,
-                    "shop_id": "demo_shop",
+                    "shop_id": self.shop_id,
                     "to_email": message.to,
                     "from_email": message.from_email or "noreply@barbershop.local",
                     "subject": message.subject,

@@ -25,6 +25,22 @@ import {
   Area
 } from "recharts";
 
+function fillDateGaps(data, days) {
+  if (!data || data.length === 0) return data;
+  const dataMap = {};
+  data.forEach(d => { dataMap[d.date] = d; });
+
+  const filled = [];
+  const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().slice(0, 10);
+    filled.push(dataMap[dateStr] || { date: dateStr, recovered: 0, lost: 0 });
+  }
+  return filled;
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState(null);
   const [chartData, setChartData] = useState([]);
@@ -41,7 +57,7 @@ export default function DashboardPage() {
         axios.get(`${API}/dashboard/revenue-chart?days=14`)
       ]);
       setStats(statsRes.data);
-      setChartData(chartRes.data.data);
+      setChartData(fillDateGaps(chartRes.data.data, 14));
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error);
     } finally {

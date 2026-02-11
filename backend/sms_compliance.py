@@ -14,7 +14,7 @@ from audit import AuditLogger
 logger = logging.getLogger(__name__)
 
 # Opt-out keywords (case-insensitive)
-OPT_OUT_KEYWORDS = {"STOP", "UNSUBSCRIBE", "CANCEL"}
+OPT_OUT_KEYWORDS = {"STOP", "UNSUBSCRIBE"}
 
 # Confirmation message for opt-out
 OPT_OUT_CONFIRMATION = "You have been unsubscribed and will no longer receive messages."

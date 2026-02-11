@@ -346,6 +346,90 @@ class PolicyUpdate(BaseModel):
     max_messages_per_day: Optional[int] = None
     business_hours: Optional[dict] = None
 
+    @field_validator("deposit_amount")
+    @classmethod
+    def validate_deposit_amount(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("deposit_amount must be >= 0")
+        return v
+
+    @field_validator("deposit_required_hours")
+    @classmethod
+    def validate_deposit_required_hours(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("deposit_required_hours must be >= 1")
+        return v
+
+    @field_validator("confirmation_window_hours")
+    @classmethod
+    def validate_confirmation_window_hours(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("confirmation_window_hours must be >= 1")
+        return v
+
+    @field_validator("cancellation_window_hours")
+    @classmethod
+    def validate_cancellation_window_hours(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("cancellation_window_hours must be >= 0")
+        return v
+
+    @field_validator("max_messages_per_day")
+    @classmethod
+    def validate_max_messages_per_day(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("max_messages_per_day must be >= 1")
+        return v
+
+
+class CreateAppointmentRequest(BaseModel):
+    client_id: str
+    barber_id: str
+    service_id: str
+    scheduled_at: str
+    duration_minutes: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class CreateClientRequest(BaseModel):
+    name: str
+    phone: str
+    email: Optional[str] = None
+    sms_consent: bool = False
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _validate_e164_phone(v)
+
+
+class UpdateClientRequest(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v):
+        if v is not None:
+            return _validate_e164_phone(v)
+        return v
+
+
+class CreateWaitlistRequest(BaseModel):
+    client_id: str
+    service_id: str
+    preferred_date: str
+    barber_id: Optional[str] = None
+    flexible_hours: int = 2
+
+    @field_validator("flexible_hours")
+    @classmethod
+    def validate_flexible_hours(cls, v):
+        if v < 0:
+            raise ValueError("flexible_hours must be >= 0")
+        return v
+
 
 class SendTestSMSRequest(BaseModel):
     to_phone: str
