@@ -124,26 +124,7 @@ async def check_rate_limit_mongodb(key: str, max_requests: int, window_seconds: 
 from deps import create_access_token, verify_token, get_current_user, get_shop
 
 
-async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    token = authorization.split(" ")[1]
-    payload = verify_token(token)
-    
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    return payload
-
-
-async def get_shop(user: dict = Depends(get_current_user)) -> Shop:
-    """Get the shop for the current user"""
-    shop_data = await db.shops.find_one({"id": user.get("shop_id")}, {"_id": 0})
-    if not shop_data:
-        raise HTTPException(status_code=404, detail="Shop not found")
-    return Shop(**shop_data)
-
+# Removed duplicate definitions - already imported from deps.py
 
 # ==================== AUTH ENDPOINTS ====================
 
