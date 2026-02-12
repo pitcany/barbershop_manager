@@ -13,8 +13,8 @@ import {
   Menu,
   X,
   User,
-  Store,
-  BarChart3
+  Wrench,
+  BarChart
 } from "lucide-react";
 
 const navItems = [
@@ -23,8 +23,8 @@ const navItems = [
   { path: "/clients", label: "Clients", icon: User },
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
   { path: "/waitlist", label: "Waitlist", icon: Users },
-  { path: "/manage", label: "Manage Shop", icon: Store },
-  { path: "/reporting", label: "Reporting", icon: BarChart3 },
+  { path: "/manage", label: "Manage Shop", icon: Wrench },
+  { path: "/reporting", label: "Reporting", icon: BarChart },
   { path: "/jobs", label: "Jobs", icon: Settings },
   { path: "/settings", label: "Settings", icon: Scissors },
 ];
