@@ -325,6 +325,15 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+    @field_validator("username", "password")
+    @classmethod
+    def validate_not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Field must not be empty")
+        if len(v) > 200:
+            raise ValueError("Field must be 200 characters or fewer")
+        return v
+
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -399,6 +408,26 @@ class PolicyUpdate(BaseModel):
             raise ValueError("max_messages_per_day must be >= 1")
         return v
 
+    @field_validator("business_hours")
+    @classmethod
+    def validate_business_hours(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, dict):
+            raise ValueError("business_hours must be a dict")
+        valid_days = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+        invalid_keys = set(v.keys()) - valid_days
+        if invalid_keys:
+            raise ValueError(f"Invalid day names: {invalid_keys}")
+        for day, hours in v.items():
+            if hours is None:
+                continue
+            if not isinstance(hours, dict) or set(hours.keys()) != {"open", "close"}:
+                raise ValueError(f"'{day}' must have 'open' and 'close' keys or be null")
+            if not isinstance(hours["open"], str) or not isinstance(hours["close"], str):
+                raise ValueError(f"'{day}' open/close must be time strings")
+        return v
+
 
 class CreateAppointmentRequest(BaseModel):
     client_id: str
@@ -414,6 +443,7 @@ class CreateClientRequest(BaseModel):
     phone: str
     email: Optional[str] = None
     sms_consent: bool = False
+    notes: Optional[str] = None
 
     @field_validator("phone")
     @classmethod
@@ -435,11 +465,12 @@ class UpdateClientRequest(BaseModel):
 
 
 class CreateWaitlistRequest(BaseModel):
-    client_id: str
-    service_id: str
+    client_id: Optional[str] = None
+    service_id: Optional[str] = None
     preferred_date: str
-    barber_id: Optional[str] = None
+    preferred_barber_id: Optional[str] = None
     flexible_hours: int = 2
+    notes: Optional[str] = None
 
     @field_validator("flexible_hours")
     @classmethod
@@ -463,6 +494,13 @@ class SendTestEmailRequest(BaseModel):
     to_email: str
     subject: str = "Test Email from Barbershop Autopilot"
     message: str = "This is a test email to verify SendGrid integration is working correctly."
+
+    @field_validator("to_email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', v):
+            raise ValueError("Invalid email format")
+        return v.strip().lower()
 
 
 # Integration Audit Log (Compliance & Observability)

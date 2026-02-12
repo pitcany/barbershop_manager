@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API } from "../App";
 import Layout from "../components/layout/Layout";
@@ -26,6 +26,9 @@ import {
   CheckCircle2
 } from "lucide-react";
 
+const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
+const safeInt = (val) => { const n = parseInt(val, 10); return isNaN(n) ? 0 : n; };
+
 export default function SettingsPage() {
   const [shop, setShop] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +37,8 @@ export default function SettingsPage() {
   const [sendingTest, setSendingTest] = useState(false);
   const [calendarStatus, setCalendarStatus] = useState({ connected: false, email: "" });
   const [connectingCalendar, setConnectingCalendar] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const savedDataRef = useRef(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -63,11 +68,25 @@ export default function SettingsPage() {
     }
   }, []);
 
+  // Track unsaved changes
+  useEffect(() => {
+    if (savedDataRef.current) {
+      setIsDirty(JSON.stringify(formData) !== JSON.stringify(savedDataRef.current));
+    }
+  }, [formData]);
+
+  // Warn on page unload with unsaved changes
+  useEffect(() => {
+    const handler = (e) => { if (isDirty) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
   const fetchShop = async () => {
     try {
       const response = await axios.get(`${API}/shop`);
       setShop(response.data);
-      setFormData({
+      const newFormData = {
         deposit_amount: response.data.deposit_amount,
         deposit_required_hours: response.data.deposit_required_hours,
         confirmation_window_hours: response.data.confirmation_window_hours,
@@ -76,7 +95,9 @@ export default function SettingsPage() {
         retention_enabled: response.data.retention_enabled ?? true,
         retention_lapse_weeks: response.data.retention_lapse_weeks ?? 4,
         retention_cooldown_days: response.data.retention_cooldown_days ?? 7,
-      });
+      };
+      setFormData(newFormData);
+      savedDataRef.current = { ...newFormData };
     } catch (error) {
       console.error("Failed to fetch shop:", error);
       toast.error("Failed to load shop settings");
@@ -141,9 +162,11 @@ export default function SettingsPage() {
     try {
       await axios.patch(`${API}/shop/policy`, formData);
       toast.success("Settings saved successfully");
-      fetchShop();
+      savedDataRef.current = { ...formData };
+      setIsDirty(false);
     } catch (error) {
       toast.error("Failed to save settings");
+      fetchShop(); // Only re-fetch on failure to revert form
     } finally {
       setSaving(false);
     }
@@ -252,7 +275,7 @@ export default function SettingsPage() {
                     step="0.01"
                     min="0"
                     value={formData.deposit_amount}
-                    onChange={(e) => setFormData(prev => ({ ...prev, deposit_amount: parseFloat(e.target.value) }))}
+                    onChange={(e) => setFormData(prev => ({ ...prev, deposit_amount: safeFloat(e.target.value) }))}
                     className="bg-input/50 border-input"
                   />
                 </div>
@@ -266,7 +289,7 @@ export default function SettingsPage() {
                     type="number"
                     min="1"
                     value={formData.deposit_required_hours}
-                    onChange={(e) => setFormData(prev => ({ ...prev, deposit_required_hours: parseInt(e.target.value) }))}
+                    onChange={(e) => setFormData(prev => ({ ...prev, deposit_required_hours: safeInt(e.target.value) }))}
                     className="bg-input/50 border-input"
                   />
                 </div>
@@ -292,7 +315,7 @@ export default function SettingsPage() {
                     type="number"
                     min="1"
                     value={formData.confirmation_window_hours}
-                    onChange={(e) => setFormData(prev => ({ ...prev, confirmation_window_hours: parseInt(e.target.value) }))}
+                    onChange={(e) => setFormData(prev => ({ ...prev, confirmation_window_hours: safeInt(e.target.value) }))}
                     className="bg-input/50 border-input"
                   />
                 </div>
@@ -306,7 +329,7 @@ export default function SettingsPage() {
                     type="number"
                     min="0"
                     value={formData.cancellation_window_hours}
-                    onChange={(e) => setFormData(prev => ({ ...prev, cancellation_window_hours: parseInt(e.target.value) }))}
+                    onChange={(e) => setFormData(prev => ({ ...prev, cancellation_window_hours: safeInt(e.target.value) }))}
                     className="bg-input/50 border-input"
                   />
                 </div>
@@ -331,7 +354,7 @@ export default function SettingsPage() {
                   type="number"
                   min="1"
                   value={formData.max_messages_per_day}
-                  onChange={(e) => setFormData(prev => ({ ...prev, max_messages_per_day: parseInt(e.target.value) }))}
+                  onChange={(e) => setFormData(prev => ({ ...prev, max_messages_per_day: safeInt(e.target.value) }))}
                   className="bg-input/50 border-input max-w-xs"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -372,7 +395,7 @@ export default function SettingsPage() {
                       min="1"
                       max="12"
                       value={formData.retention_lapse_weeks}
-                      onChange={(e) => setFormData(prev => ({ ...prev, retention_lapse_weeks: parseInt(e.target.value) }))}
+                      onChange={(e) => setFormData(prev => ({ ...prev, retention_lapse_weeks: safeInt(e.target.value) }))}
                       className="bg-input/50 border-input"
                       disabled={!formData.retention_enabled}
                     />
@@ -391,7 +414,7 @@ export default function SettingsPage() {
                       min="1"
                       max="30"
                       value={formData.retention_cooldown_days}
-                      onChange={(e) => setFormData(prev => ({ ...prev, retention_cooldown_days: parseInt(e.target.value) }))}
+                      onChange={(e) => setFormData(prev => ({ ...prev, retention_cooldown_days: safeInt(e.target.value) }))}
                       className="bg-input/50 border-input"
                       disabled={!formData.retention_enabled}
                     />
@@ -411,7 +434,7 @@ export default function SettingsPage() {
                 className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 <Save className="w-4 h-4 mr-2" />
-                {saving ? "Saving..." : "Save Settings"}
+                {saving ? "Saving..." : isDirty ? "Save Settings *" : "Save Settings"}
               </Button>
             </div>
           </CardContent>
