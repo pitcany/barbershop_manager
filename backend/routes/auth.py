@@ -30,6 +30,12 @@ async def login(request: LoginRequest, raw_request: Request):
     if not admin or not pwd_context.verify(request.password, admin["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # Update last login
+    await db.admin_users.update_one(
+        {"id": admin["id"]},
+        {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
+    )
+
     token = create_access_token({"sub": admin["id"], "username": admin["username"], "shop_id": admin["shop_id"]})
     return TokenResponse(access_token=token, token_type="bearer")
 
