@@ -213,7 +213,7 @@ export default function SettingsPage() {
   return (
     <Layout title="Settings">
       <div data-testid="settings-page" className="space-y-6 max-w-4xl">
-        {/* Shop Info */}
+        {/* Shop Details (Editable) */}
         <Card className="bg-card border-border">
           <CardHeader>
             <div className="flex items-center gap-3">
@@ -221,29 +221,59 @@ export default function SettingsPage() {
                 <Store className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <CardTitle className="font-heading">{shop?.name}</CardTitle>
-                <CardDescription>{shop?.address}</CardDescription>
+                <CardTitle className="font-heading">Shop Details</CardTitle>
+                <CardDescription>Update your shop's contact information</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Shop Name</Label>
+                <Input data-testid="shop-name-input" value={shopDetails.name} onChange={(e) => setShopDetails(p => ({ ...p, name: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input data-testid="shop-phone-input" value={shopDetails.phone} onChange={(e) => setShopDetails(p => ({ ...p, phone: e.target.value }))} placeholder="+15551234567" />
+              </div>
+              <div className="space-y-2">
+                <Label>Email</Label>
+                <Input data-testid="shop-email-input" type="email" value={shopDetails.email} onChange={(e) => setShopDetails(p => ({ ...p, email: e.target.value }))} placeholder="shop@example.com" />
+              </div>
+              <div className="space-y-2">
+                <Label>Address</Label>
+                <Input data-testid="shop-address-input" value={shopDetails.address} onChange={(e) => setShopDetails(p => ({ ...p, address: e.target.value }))} placeholder="123 Main St, City, ST" />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={handleSaveDetails} disabled={savingDetails} data-testid="save-shop-details-btn">
+                <Save className="w-4 h-4 mr-2" />{savingDetails ? "Saving..." : "Save Details"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Booking Link */}
+        <Card className="bg-card border-border">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-emerald-500/10 rounded-lg flex items-center justify-center">
+                <Link2 className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <CardTitle className="font-heading">Online Booking</CardTitle>
+                <CardDescription>Share this link so clients can book appointments online</CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <p className="text-muted-foreground">Phone</p>
-                <p className="font-mono">{shop?.phone}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Email</p>
-                <p>{shop?.email || "-"}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Timezone</p>
-                <p>{shop?.timezone}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">SMS Consent Link</p>
-                <p className="text-primary">/sms-consent</p>
-              </div>
+            <div className="flex items-center gap-3 bg-zinc-800/50 rounded-lg p-4">
+              <code data-testid="booking-link-display" className="flex-1 text-sm font-mono text-primary truncate">
+                {window.location.origin}/book
+              </code>
+              <Button onClick={copyBookingLink} data-testid="copy-booking-link-btn" variant="outline" size="sm" className="shrink-0 gap-2">
+                <Link2 className="w-4 h-4" /> Copy Link
+              </Button>
             </div>
           </CardContent>
         </Card>
