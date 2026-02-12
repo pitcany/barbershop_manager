@@ -34,7 +34,10 @@ export default function SettingsPage() {
     deposit_required_hours: 48,
     confirmation_window_hours: 24,
     cancellation_window_hours: 4,
-    max_messages_per_day: 4
+    max_messages_per_day: 4,
+    retention_enabled: true,
+    retention_lapse_weeks: 4,
+    retention_cooldown_days: 7,
   });
 
   useEffect(() => {
@@ -50,7 +53,10 @@ export default function SettingsPage() {
         deposit_required_hours: response.data.deposit_required_hours,
         confirmation_window_hours: response.data.confirmation_window_hours,
         cancellation_window_hours: response.data.cancellation_window_hours,
-        max_messages_per_day: response.data.max_messages_per_day
+        max_messages_per_day: response.data.max_messages_per_day,
+        retention_enabled: response.data.retention_enabled ?? true,
+        retention_lapse_weeks: response.data.retention_lapse_weeks ?? 4,
+        retention_cooldown_days: response.data.retention_cooldown_days ?? 7,
       });
     } catch (error) {
       console.error("Failed to fetch shop:", error);
