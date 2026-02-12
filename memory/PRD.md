@@ -12,14 +12,14 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 ### Code Structure
 ```
 /app/backend/
-  server.py          # Slim entry point (182 lines): app, CORS, startup, seed
+  server.py          # Slim entry point: app, CORS, startup, seed
   deps.py            # Shared: db, auth, rate limiting
-  models.py          # Pydantic models
+  models.py          # Pydantic models (incl. barber/service CRUD models)
   routes/
-    auth.py          # Auth, shop, dashboard, barbers, services, SMS/email test, health
+    auth.py          # Auth, shop, dashboard, barbers CRUD, services CRUD, today-schedule
     appointments.py  # Appointment CRUD, scheduling, availability
     clients.py       # Clients, conversations, waitlist
-    payments.py      # Stripe payments, mock payment
+    payments.py      # Stripe payments
     calendar.py      # Google Calendar OAuth, events
     jobs.py          # Scheduler jobs, reporting, audit, retention
     public.py        # Public booking portal + SMS consent + shop info
@@ -27,15 +27,20 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
   providers/         # Provider abstraction (interfaces, mock, real)
   agents/            # Business logic agents
   scheduler.py       # APScheduler config
-/app/frontend/src/pages/
-  BookingPage.jsx            # Public self-service booking wizard
-  BookingConfirmationPage.jsx # Post-payment confirmation
-  + existing admin pages...
+/app/frontend/src/
+  pages/
+    DashboardPage.jsx          # Dashboard with Today's Schedule
+    AppointmentsPage.jsx       # Appointments list + New Appointment modal
+    ManagePage.jsx             # Barber & Service CRUD management
+    BookingPage.jsx            # Public self-service booking wizard
+    BookingConfirmationPage.jsx
+    + existing admin pages...
+  components/layout/Layout.jsx  # Sidebar navigation
 ```
 
 ## What's Been Implemented
 
-### Phase 1-5: Core MVP through RetentionRebookAgent (Feb 6-12)
+### Phase 1-5: Core MVP through RetentionRebookAgent
 - All database models + provider abstraction layer
 - Agent system (FrontDesk, NoShow, Waitlist, OwnerOps, RetentionRebook)
 - Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
@@ -45,22 +50,24 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 - APScheduler background jobs
 - Reporting + Jobs dashboards
 
-### Phase 6: Stripe & Google Calendar Integrations (Feb 12)
+### Phase 6: Stripe & Google Calendar Integrations
 - **Stripe Payments (REAL)**: Checkout sessions, payment_transactions, status polling, webhook handler
 - **Google Calendar (REAL OAuth2)**: OAuth flow, token storage/refresh, event CRUD, freebusy
 
-### Phase 7: server.py Refactor (Feb 12)
-- Decomposed 2,555-line monolith into 8 route modules + shared deps.py (93% reduction)
+### Phase 7: server.py Refactor
+- Decomposed 2,555-line monolith into 8 route modules + shared deps.py
 
-### Phase 8: Client Self-Service Booking Portal (Feb 12)
-- **Public booking wizard** at `/book`: Service → Barber → Date/Time → Info → Confirm
-- **Smart deposit enforcement**: Required when booking within 48h or client has no-show history
-- **Stripe checkout integration**: Redirects to Stripe when deposit required, then to `/book/confirmation`
-- **Client creation**: Auto-creates or updates client record from phone number
-- **Calendar sync**: Appointments booked via portal auto-create Google Calendar events
-- **Rate limiting**: 10 bookings per IP per hour
-- Public API endpoints: `/api/public/barbers`, `/api/public/services`, `/api/public/availability`, `/api/public/book`, `/api/public/appointment/{id}`
-- 100% test pass rate (29/29 backend + all frontend tests)
+### Phase 8: Client Self-Service Booking Portal
+- Public booking wizard at `/book`
+- Smart deposit enforcement, Stripe checkout, client creation, calendar sync, rate limiting
+
+### Phase 9: Manager Workflow Fixes (Feb 12, 2026) — JUST COMPLETED
+- **"New Appointment" button** on Appointments page — dialog modal with client search, barber/service/date/time selection
+- **Barber & Service Management page** at `/manage` — full CRUD (add/edit/delete) with tabs
+- **"Today's Schedule" view** on Dashboard — timeline of day's appointments with time, client, service, barber, status
+- **Backend CRUD endpoints**: POST/PATCH/DELETE for barbers and services
+- **Navigation update**: Added "Manage Shop" to sidebar, reordered nav items
+- 100% test pass rate (26 backend + all frontend tests)
 
 ## Integration Status
 | Service | Status | Details |
@@ -73,6 +80,9 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 ## Prioritized Backlog
 
 ### P1 (Next)
+- [ ] Editable shop details (phone, email, address) in Settings page
+- [ ] Shareable booking link displayed in admin UI
+- [ ] Hide internal MongoDB IDs from client list
 - [ ] Enable Twilio for real SMS (pending credentials)
 - [ ] Migrate APScheduler to Celery+Redis for production
 - [ ] Billing infrastructure (Stripe Connect for platform fee on deposits)
@@ -83,5 +93,5 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 
 ## Credentials
 - **Admin**: username=admin, password=admin123
-- **Public Booking**: https://salon-flow-manager.preview.emergentagent.com/book
-- **Admin Dashboard**: https://salon-flow-manager.preview.emergentagent.com/login
+- **Public Booking**: /book
+- **Admin Dashboard**: /login
