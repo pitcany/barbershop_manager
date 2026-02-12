@@ -287,6 +287,69 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            <Separator />
+
+            {/* Retention Settings */}
+            <div>
+              <h4 className="text-sm font-medium mb-4 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-primary" />
+                Client Retention
+              </h4>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 p-3">
+                  <div>
+                    <p className="text-sm font-medium">Enable Retention Outreach</p>
+                    <p className="text-xs text-muted-foreground">Automatically re-engage lapsed clients</p>
+                  </div>
+                  <Switch
+                    data-testid="retention-enabled-switch"
+                    checked={formData.retention_enabled}
+                    onCheckedChange={(v) => setFormData(prev => ({ ...prev, retention_enabled: v }))}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="retention_lapse_weeks">
+                      Lapse Threshold (weeks since last visit)
+                    </Label>
+                    <Input
+                      id="retention_lapse_weeks"
+                      data-testid="retention-lapse-weeks-input"
+                      type="number"
+                      min="1"
+                      max="12"
+                      value={formData.retention_lapse_weeks}
+                      onChange={(e) => setFormData(prev => ({ ...prev, retention_lapse_weeks: parseInt(e.target.value) }))}
+                      className="bg-input/50 border-input"
+                      disabled={!formData.retention_enabled}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Clients with no visit after this many weeks will receive outreach
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="retention_cooldown_days">
+                      Cooldown Period (days between touches)
+                    </Label>
+                    <Input
+                      id="retention_cooldown_days"
+                      data-testid="retention-cooldown-input"
+                      type="number"
+                      min="1"
+                      max="30"
+                      value={formData.retention_cooldown_days}
+                      onChange={(e) => setFormData(prev => ({ ...prev, retention_cooldown_days: parseInt(e.target.value) }))}
+                      className="bg-input/50 border-input"
+                      disabled={!formData.retention_enabled}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Minimum days between outreach messages to the same client
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="flex justify-end">
               <Button
                 onClick={handleSave}
