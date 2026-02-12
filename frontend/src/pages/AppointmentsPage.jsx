@@ -32,7 +32,8 @@ import {
   Scissors,
   Filter,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  CreditCard
 } from "lucide-react";
 import { format } from "date-fns";
 
