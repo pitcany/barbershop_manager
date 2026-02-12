@@ -20,7 +20,7 @@ const navItems = [
   { path: "/clients", label: "Clients", icon: Users },
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
   { path: "/appointments", label: "Appointments", icon: Calendar },
-  { path: "/waitlist", label: "Waitlist", icon: Calendar },
+  { path: "/waitlist", label: "Waitlist", icon: ClipboardList },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
