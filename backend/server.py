@@ -25,7 +25,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # Import shared dependencies from deps module
-from deps import db, pwd_context
+from deps import db, pwd_context, check_rate_limit
 
 # Import models (for seed data and type hints)
 from models import (
