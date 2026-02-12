@@ -277,14 +277,14 @@ export default function ClientDetailPage() {
                   <div className="space-y-2">
                     <Label>Preferred Barber (optional)</Label>
                     <Select
-                      value={bookingData.barber_id}
-                      onValueChange={(val) => setBookingData(prev => ({ ...prev, barber_id: val, slot: null }))}
+                      value={bookingData.barber_id || "any"}
+                      onValueChange={(val) => setBookingData(prev => ({ ...prev, barber_id: val === "any" ? "" : val, slot: null }))}
                     >
                       <SelectTrigger data-testid="booking-barber-select">
                         <SelectValue placeholder="Any available" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Any available</SelectItem>
+                        <SelectItem value="any">Any available</SelectItem>
                         {barbers.map((b) => (
                           <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
                         ))}
