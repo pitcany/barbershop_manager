@@ -270,21 +270,34 @@ export default function AppointmentsPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Select
-                            value={apt.status}
-                            onValueChange={(value) => updateStatus(apt.id, value)}
-                          >
-                            <SelectTrigger className="w-32 h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {statusOptions.slice(1).map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <div className="flex items-center gap-2">
+                            {(apt.status === "deposit_pending" || (apt.status === "pending" && apt.deposit_required && !apt.deposit_paid)) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-xs gap-1 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                                onClick={() => initiateDeposit(apt.id)}
+                                data-testid={`pay-deposit-btn-${apt.id}`}
+                              >
+                                <CreditCard className="w-3 h-3" /> Pay Deposit
+                              </Button>
+                            )}
+                            <Select
+                              value={apt.status}
+                              onValueChange={(value) => updateStatus(apt.id, value)}
+                            >
+                              <SelectTrigger className="w-32 h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {statusOptions.slice(1).map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
