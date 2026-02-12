@@ -12,9 +12,7 @@ import {
   Scissors,
   Menu,
   X,
-  User,
-  BarChart3,
-  Zap
+  User
 } from "lucide-react";
 
 const navItems = [
@@ -23,9 +21,9 @@ const navItems = [
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
   { path: "/appointments", label: "Appointments", icon: Calendar },
   { path: "/waitlist", label: "Waitlist", icon: Users },
-  { path: "/reporting", label: "Reporting", icon: BarChart3 },
-  { path: "/jobs", label: "Jobs", icon: Zap },
-  { path: "/settings", label: "Settings", icon: Settings },
+  { path: "/reporting", label: "Reporting", icon: LayoutDashboard },
+  { path: "/jobs", label: "Jobs", icon: Settings },
+  { path: "/settings", label: "Settings", icon: Scissors },
 ];
 
 export default function Layout({ children, title }) {
