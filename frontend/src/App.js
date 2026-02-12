@@ -145,6 +145,16 @@ function App() {
                 <AppointmentsPage />
               </ProtectedRoute>
             } />
+            <Route path="/clients" element={
+              <ProtectedRoute>
+                <ClientsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/clients/:clientId" element={
+              <ProtectedRoute>
+                <ClientDetailPage />
+              </ProtectedRoute>
+            } />
             <Route path="/waitlist" element={
               <ProtectedRoute>
                 <WaitlistPage />

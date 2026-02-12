@@ -11,7 +11,8 @@ import {
   LogOut,
   Scissors,
   Menu,
-  X
+  X,
+  ClipboardList
 } from "lucide-react";
 
 const navItems = [
