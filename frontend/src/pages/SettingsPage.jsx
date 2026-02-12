@@ -568,7 +568,7 @@ export default function SettingsPage() {
             </div>
             
             <Button
-              onClick={handleSendTestSMS}
+              onClick={sendTestSMS}
               disabled={sendingTest}
               data-testid="send-test-sms-button"
               variant="outline"
