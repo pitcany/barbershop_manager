@@ -30,6 +30,20 @@ class AppointmentStatus(str, Enum):
     RESCHEDULED = "rescheduled"  # Moved to new time
 
 
+# Valid state machine transitions for appointments
+ALLOWED_TRANSITIONS = {
+    "pending": {"confirmed", "cancelled", "deposit_pending"},
+    "confirmed": {"completed", "cancelled", "no_show", "rescheduled"},
+    "deposit_pending": {"deposit_paid", "cancelled"},
+    "deposit_paid": {"confirmed", "completed", "cancelled", "no_show"},
+    "rescheduled": {"pending", "confirmed", "cancelled"},
+    # Terminal states — no outgoing transitions
+    "completed": set(),
+    "no_show": set(),
+    "cancelled": set(),
+}
+
+
 class MessageDirection(str, Enum):
     INBOUND = "inbound"  # From client
     OUTBOUND = "outbound"  # To client

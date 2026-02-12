@@ -9,6 +9,7 @@ from .interfaces import (
 )
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
+import asyncio
 import os
 import logging
 
@@ -43,16 +44,17 @@ class TwilioSMSProvider(SMSProvider):
     async def send_sms(self, message: SMSMessage) -> SMSResponse:
         if not self.client:
             return SMSResponse(success=False, error="Twilio not configured")
-        
+
         try:
-            msg = self.client.messages.create(
+            msg = await asyncio.to_thread(
+                self.client.messages.create,
                 body=message.body,
                 from_=message.from_ or self.from_number,
-                to=message.to
+                to=message.to,
             )
-            
+
             logger.info(f"[TWILIO] Sent SMS to {message.to}: {msg.sid}")
-            
+
             return SMSResponse(
                 success=True,
                 message_id=msg.sid
@@ -64,16 +66,17 @@ class TwilioSMSProvider(SMSProvider):
     async def validate_webhook(self, url: str, params: dict, signature: str) -> bool:
         if not self.validator:
             return False
-        return self.validator.validate(url, params, signature)
+        return await asyncio.to_thread(self.validator.validate, url, params, signature)
 
 
 class StripePaymentProvider(PaymentProvider):
     """Real Stripe payment provider using emergentintegrations"""
-    
+
     def __init__(self, webhook_url: str = ""):
         self.api_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
+        self.webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
         self.default_webhook_url = webhook_url
-        
+
         if not self.api_key:
             logger.warning("Stripe API key not found")
     
@@ -156,21 +159,37 @@ class StripePaymentProvider(PaymentProvider):
     async def handle_webhook(self, request_body: bytes, signature: str) -> Dict[str, Any]:
         if not self.api_key:
             return {"error": "Stripe not configured"}
-        
+
+        if not self.webhook_secret:
+            logger.error("[STRIPE] STRIPE_WEBHOOK_SECRET not configured — rejecting webhook")
+            return {"error": "Webhook secret not configured"}
+
         try:
-            checkout = self._get_checkout()
-            webhook_response = await checkout.handle_webhook(request_body, signature)
-            
-            return {
-                "event_type": webhook_response.event_type,
-                "event_id": webhook_response.event_id,
-                "session_id": webhook_response.session_id,
-                "payment_status": webhook_response.payment_status,
-                "metadata": webhook_response.metadata
-            }
+            import stripe
+            stripe.api_key = self.api_key
+            event = stripe.Webhook.construct_event(
+                request_body, signature, self.webhook_secret
+            )
+        except stripe.error.SignatureVerificationError:
+            logger.warning("[STRIPE] Webhook signature verification failed")
+            return {"error": "Invalid signature"}
         except Exception as e:
-            logger.error(f"[STRIPE] Webhook error: {e}")
-            return {"error": str(e)}
+            logger.error(f"[STRIPE] Webhook parse error: {e}")
+            return {"error": "Webhook verification failed"}
+
+        # Process checkout.session.completed events
+        if event["type"] == "checkout.session.completed":
+            session = event["data"]["object"]
+            return {
+                "event_type": event["type"],
+                "session_id": session.get("id"),
+                "payment_status": session.get("payment_status"),
+            }
+
+        return {
+            "event_type": event["type"],
+            "status": "acknowledged",
+        }
 
 
 class SendGridEmailProvider(EmailProvider):
@@ -206,7 +225,7 @@ class SendGridEmailProvider(EmailProvider):
                 plain_text_content=message.plain_content
             )
             
-            response = self.client.send(mail)
+            response = await asyncio.to_thread(self.client.send, mail)
             
             success = response.status_code == 202
             
@@ -284,10 +303,11 @@ class GoogleCalendarProvider(CalendarProvider):
             if event.attendee_email:
                 event_body["attendees"] = [{"email": event.attendee_email}]
             
-            result = service.events().insert(
+            request = service.events().insert(
                 calendarId=calendar_id,
                 body=event_body
-            ).execute()
+            )
+            result = await asyncio.to_thread(request.execute)
             
             logger.info(f"[GCAL] Created event: {result['id']}")
             return result["id"]
@@ -307,11 +327,12 @@ class GoogleCalendarProvider(CalendarProvider):
                 "start": {"dateTime": event.start_time.isoformat(), "timeZone": "UTC"},
                 "end": {"dateTime": event.end_time.isoformat(), "timeZone": "UTC"},
             }
-            service.events().update(
+            request = service.events().update(
                 calendarId=calendar_id,
                 eventId=event_id,
                 body=event_body
-            ).execute()
+            )
+            await asyncio.to_thread(request.execute)
             logger.info(f"[GCAL] Updated event: {event_id}")
             return True
         except Exception as e:
@@ -324,10 +345,11 @@ class GoogleCalendarProvider(CalendarProvider):
             return False
         
         try:
-            service.events().delete(
+            request = service.events().delete(
                 calendarId=calendar_id,
                 eventId=event_id
-            ).execute()
+            )
+            await asyncio.to_thread(request.execute)
             logger.info(f"[GCAL] Deleted event: {event_id}")
             return True
         except Exception as e:

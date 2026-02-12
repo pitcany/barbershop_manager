@@ -14,10 +14,13 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import re
-import time
 import uuid
 import jwt
 from passlib.context import CryptContext
+
+# ==================== PAGINATION CONSTANTS ====================
+
+MAX_LIMIT = 200  # Server-side cap on limit parameter
 
 # Load environment
 ROOT_DIR = Path(__file__).parent
@@ -30,7 +33,7 @@ from models import (
     LoginRequest, TokenResponse, SMSConsentRequest, PolicyUpdate, SendTestSMSRequest,
     SendTestEmailRequest, AdminUser, EmailOutbox, AuditProvider, AuditAction,
     RevenueSource, CreateAppointmentRequest, CreateClientRequest, UpdateClientRequest,
-    CreateWaitlistRequest
+    CreateWaitlistRequest, ALLOWED_TRANSITIONS
 )
 
 # Import providers and agents
@@ -84,42 +87,40 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 
+# ==================== PAGINATION HELPERS ====================
+
+def clamp_pagination(limit: int, skip: int, max_limit: int = MAX_LIMIT) -> tuple:
+    """Clamp limit and skip to safe ranges. Returns (limit, skip)."""
+    limit = max(1, min(limit, max_limit))
+    skip = max(0, skip)
+    return limit, skip
+
+
 # ==================== RATE LIMITING ====================
 
-_rate_limit_store: Dict[str, List[float]] = {}
-_rate_limit_windows: Dict[str, int] = {}
+async def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
+    """Returns True if request is allowed, False if rate limited.
 
-def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
-    """Returns True if request is allowed, False if rate limited."""
-    now = time.time()
-    if key not in _rate_limit_store:
-        _rate_limit_store[key] = []
-        _rate_limit_windows[key] = window_seconds
-    elif key not in _rate_limit_windows:
-        _rate_limit_windows[key] = window_seconds
-    # Remove expired entries
-    _rate_limit_store[key] = [t for t in _rate_limit_store[key] if now - t < window_seconds]
-    if not _rate_limit_store[key]:
-        del _rate_limit_store[key]
-        _rate_limit_windows.pop(key, None)
-    if key not in _rate_limit_store:
-        _rate_limit_store[key] = [now]
-        _rate_limit_windows[key] = window_seconds
-        return True
-    if len(_rate_limit_store[key]) >= max_requests:
+    Uses MongoDB so rate limits are shared across multiple workers.
+    Expired entries are cleaned up automatically via a TTL index on
+    the ``rate_limit_entries`` collection (created at startup).
+    """
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(seconds=window_seconds)
+
+    count = await db.rate_limit_entries.count_documents({
+        "key": key,
+        "timestamp": {"$gte": window_start},
+    })
+
+    if count >= max_requests:
         return False
-    _rate_limit_store[key].append(now)
 
-    # Periodic cleanup: prune stale keys when store grows large
-    if len(_rate_limit_store) > 10000:
-        stale_keys = [
-            k for k, timestamps in _rate_limit_store.items()
-            if all(now - t > _rate_limit_windows.get(k, window_seconds) for t in timestamps)
-        ]
-        for k in stale_keys:
-            del _rate_limit_store[k]
-            _rate_limit_windows.pop(k, None)
-
+    await db.rate_limit_entries.insert_one({
+        "key": key,
+        "timestamp": now,
+        "expires_at": now + timedelta(seconds=window_seconds),
+    })
     return True
 
 
@@ -169,7 +170,7 @@ async def get_shop(user: dict = Depends(get_current_user)) -> Shop:
 async def login(request: LoginRequest, raw_request: Request):
     """Admin login"""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
+    if not await check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
 
     admin = await db.admin_users.find_one({"username": request.username}, {"_id": 0})
@@ -316,6 +317,7 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
 @api_router.get("/dashboard/revenue-chart")
 async def get_revenue_chart(shop: Shop = Depends(get_shop), days: int = 30):
     """Get revenue data for chart"""
+    days = max(1, min(days, 365))
     now = datetime.now(timezone.utc)
     start_date = now - timedelta(days=days)
     
@@ -370,16 +372,18 @@ async def list_appointments(
     skip: int = 0
 ):
     """List appointments"""
+    limit, skip = clamp_pagination(limit, skip)
+
     query = {"shop_id": shop.id}
-    
+
     if status:
         query["status"] = status
-    
+
     if date:
         if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
             raise HTTPException(status_code=400, detail="Date must be in YYYY-MM-DD format")
         query["scheduled_at"] = {"$gte": date, "$lt": f"{date}T23:59:59"}
-    
+
     appointments = await db.appointments.find(
         query, {"_id": 0}
     ).sort("scheduled_at", -1).skip(skip).limit(limit).to_list(limit)
@@ -419,19 +423,6 @@ async def get_appointment(appointment_id: str, shop: Shop = Depends(get_shop)):
         raise HTTPException(status_code=404, detail="Appointment not found")
     
     return appointment
-
-
-ALLOWED_TRANSITIONS = {
-    "pending": {"confirmed", "cancelled", "deposit_pending"},
-    "confirmed": {"completed", "cancelled", "no_show", "rescheduled"},
-    "deposit_pending": {"deposit_paid", "cancelled"},
-    "deposit_paid": {"confirmed", "completed", "cancelled", "no_show"},
-    "rescheduled": {"pending", "confirmed", "cancelled"},
-    # Terminal states — no outgoing transitions
-    "completed": set(),
-    "no_show": set(),
-    "cancelled": set(),
-}
 
 
 @api_router.patch("/appointments/{appointment_id}/status")
@@ -507,6 +498,15 @@ async def update_appointment_status(
     return {"message": "Status updated"}
 
 
+@api_router.get("/appointments/allowed-transitions")
+async def get_allowed_transitions(shop: Shop = Depends(get_shop)):
+    """Return the appointment state machine transitions for frontend validation."""
+    return {
+        status: sorted(targets)
+        for status, targets in ALLOWED_TRANSITIONS.items()
+    }
+
+
 # ==================== SCHEDULING / AVAILABILITY ENDPOINTS ====================
 
 @api_router.get("/scheduling/availability")
@@ -518,7 +518,7 @@ async def get_availability(
 ):
     """
     Get available time slots for a given date.
-    
+
     Query params:
     - date: ISO date string (YYYY-MM-DD), defaults to today
     - barber_id: Optional specific barber
@@ -532,7 +532,7 @@ async def get_availability(
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
         target_date = datetime.now(timezone.utc)
-    
+
     # Get service duration
     duration = 30  # Default
     if service_id:
@@ -542,10 +542,10 @@ async def get_availability(
         )
         if service:
             duration = service.get("duration_minutes", 30)
-    
+
     scheduler = create_scheduling_engine(db, shop.model_dump())
     slots = await scheduler.get_available_slots(target_date, barber_id, duration)
-    
+
     return {
         "date": target_date.date().isoformat(),
         "duration_minutes": duration,
@@ -562,12 +562,12 @@ async def get_barber_schedule(
 ):
     """
     Get a barber's schedule for a date range.
-    
+
     Defaults to the current day if no dates provided.
     """
     # Parse dates
     now = datetime.now(timezone.utc)
-    
+
     if start_date:
         try:
             start_dt = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
@@ -575,7 +575,7 @@ async def get_barber_schedule(
             raise HTTPException(status_code=400, detail="Invalid start_date format")
     else:
         start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    
+
     if end_date:
         try:
             end_dt = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
@@ -583,7 +583,7 @@ async def get_barber_schedule(
             raise HTTPException(status_code=400, detail="Invalid end_date format")
     else:
         end_dt = start_dt + timedelta(days=1)
-    
+
     # Validate barber exists
     barber = await db.barbers.find_one(
         {"id": barber_id, "shop_id": shop.id},
@@ -591,10 +591,10 @@ async def get_barber_schedule(
     )
     if not barber:
         raise HTTPException(status_code=404, detail="Barber not found")
-    
+
     scheduler = create_scheduling_engine(db, shop.model_dump())
     appointments = await scheduler.get_barber_schedule(barber_id, start_dt, end_dt)
-    
+
     return {
         "barber": barber,
         "start_date": start_dt.isoformat(),
@@ -613,19 +613,19 @@ async def validate_slot(
 ):
     """
     Validate if a specific time slot is available.
-    
+
     Returns whether the slot can be booked and any conflict details.
     """
     if not barber_id or not scheduled_at:
         raise HTTPException(status_code=400, detail="barber_id and scheduled_at are required")
-    
+
     try:
         scheduled_dt = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
         if scheduled_dt.tzinfo is None:
             scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid scheduled_at format")
-    
+
     scheduler = create_scheduling_engine(db, shop.model_dump())
     is_valid, error_msg = await scheduler.validate_appointment_slot(
         barber_id=barber_id,
@@ -633,13 +633,14 @@ async def validate_slot(
         duration_minutes=duration_minutes,
         exclude_appointment_id=exclude_appointment_id
     )
-    
+
     return {
         "valid": is_valid,
         "error": error_msg,
         "barber_id": barber_id,
         "scheduled_at": scheduled_dt.isoformat(),
         "duration_minutes": duration_minutes
+    }
     }
 
 
@@ -679,7 +680,7 @@ async def create_appointment(
         raise HTTPException(status_code=400, detail="Invalid scheduled_at format — use ISO 8601")
 
     duration = body.duration_minutes or service.get("duration_minutes", 30)
-    
+
     # === CONFLICT PREVENTION ===
     scheduler = create_scheduling_engine(db, shop.model_dump())
     is_valid, error_msg = await scheduler.validate_appointment_slot(
@@ -687,10 +688,11 @@ async def create_appointment(
         scheduled_at=scheduled_dt,
         duration_minutes=duration
     )
-    
+
     if not is_valid:
         raise HTTPException(status_code=409, detail=error_msg)
-    
+
+
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Check deposit requirement
@@ -761,15 +763,17 @@ async def list_clients(
     skip: int = 0
 ):
     """List clients"""
+    limit, skip = clamp_pagination(limit, skip)
+
     query = {"shop_id": shop.id}
-    
+
     if search:
         escaped_search = re.escape(search)
         query["$or"] = [
             {"name": {"$regex": escaped_search, "$options": "i"}},
             {"phone": {"$regex": escaped_search}}
         ]
-    
+
     clients = await db.clients.find(
         query, {"_id": 0}
     ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
@@ -1021,6 +1025,7 @@ async def add_client_to_waitlist(
 @api_router.get("/conversations")
 async def list_conversations(shop: Shop = Depends(get_shop), limit: int = 50):
     """List conversation threads (grouped by client)"""
+    limit, _ = clamp_pagination(limit, 0)
     # Get unique clients with messages, sorted by most recent
     pipeline = [
         {"$match": {"shop_id": shop.id}},
@@ -1053,6 +1058,7 @@ async def list_conversations(shop: Shop = Depends(get_shop), limit: int = 50):
 @api_router.get("/conversations/{client_id}")
 async def get_conversation(client_id: str, shop: Shop = Depends(get_shop), limit: int = 100):
     """Get messages for a specific client"""
+    limit, _ = clamp_pagination(limit, 0)
     messages = await db.messages.find(
         {"shop_id": shop.id, "client_id": client_id},
         {"_id": 0}
@@ -1715,7 +1721,7 @@ async def list_calendar_events(shop: Shop = Depends(get_shop)):
 async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
     """Public endpoint for SMS consent form (compliance-compliant)"""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
+    if not await check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     # Find shop (using first shop for MVP)
@@ -1975,8 +1981,8 @@ async def list_payment_transactions(
 
 
 @api_router.get("/mock-payment")
-async def mock_payment_page(session_id: str):
-    """Mock payment endpoint for local testing"""
+async def mock_payment_page(session_id: str, shop: Shop = Depends(get_shop)):
+    """Mock payment endpoint for local testing (auth required)"""
     from providers.mock_providers import MockPaymentProvider
     
     payment = get_payment()
@@ -2138,11 +2144,13 @@ async def list_audit_log(
     limit: int = 100
 ):
     """List integration audit log entries"""
+    limit, _ = clamp_pagination(limit, 0)
+
     query = {"shop_id": shop.id}
-    
+
     if provider:
         query["provider"] = provider
-    
+
     entries = await db.integration_audit_log.find(
         query, {"_id": 0}
     ).sort("created_at", -1).limit(limit).to_list(limit)
@@ -2160,8 +2168,10 @@ async def list_recovered_revenue_events(
     Internal endpoint to query recovered revenue events.
     NOT for UI display - for debugging and verification only.
     """
+    limit, _ = clamp_pagination(limit, 0)
+
     query = {"shop_id": shop.id}
-    
+
     if source:
         query["source"] = source
     
@@ -2345,7 +2355,10 @@ app.add_middleware(
 async def startup_event():
     """Initialize database with seed data if empty, then start scheduler"""
     logger.info("Starting Barbershop Autopilot...")
-    
+
+    # Ensure TTL index for rate-limit entries (auto-cleanup)
+    await db.rate_limit_entries.create_index("expires_at", expireAfterSeconds=0)
+
     # Check if shop exists
     shop_count = await db.shops.count_documents({})
     
@@ -2546,7 +2559,7 @@ async def seed_demo_data():
     await db.admin_users.insert_one(admin)
     
     logger.info("Demo data seeded successfully!")
-    logger.info(f"Admin login: username='admin', password='{admin_password}'")
+    logger.info("Admin login: username='admin' (password set via ADMIN_PASSWORD env var)")
 
 
 @app.on_event("shutdown")

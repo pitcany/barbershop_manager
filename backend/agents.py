@@ -9,10 +9,12 @@ import re
 
 from models import (
     Appointment, AppointmentStatus, Client, Message, MessageDirection,
-    Service, Barber, Shop, Waitlist, Event, EventType
+    Service, Barber, Shop, Waitlist, Event, EventType, ALLOWED_TRANSITIONS
 )
 from providers import get_sms, get_calendar, get_payment
 from providers.interfaces import SMSMessage, CalendarEvent
+from audit import create_audit_logger
+from sms_compliance import create_sms_service
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +128,11 @@ class FrontDeskAgent:
             shop_name=self.shop.name
         ), {"action": "greeting"}
     
+    def _is_valid_transition(self, current_status: str, new_status: str) -> bool:
+        """Check if a status transition is allowed by the state machine."""
+        allowed = ALLOWED_TRANSITIONS.get(current_status, set())
+        return new_status in allowed
+
     async def _handle_confirmation(self, client: Client) -> Tuple[str, Dict]:
         """Handle appointment confirmation"""
         # Find pending appointment
@@ -134,10 +141,14 @@ class FrontDeskAgent:
             "client_id": client.id,
             "status": {"$in": [AppointmentStatus.PENDING.value, AppointmentStatus.DEPOSIT_PAID.value]}
         }, {"_id": 0})
-        
+
         if not appointment:
             return "You don't have any pending appointments to confirm.", {"action": "no_appointment"}
-        
+
+        current_status = appointment.get("status", "pending")
+        if not self._is_valid_transition(current_status, AppointmentStatus.CONFIRMED.value):
+            return "Your appointment cannot be confirmed right now.", {"action": "invalid_transition"}
+
         # Update appointment status
         await self.db.appointments.update_one(
             {"id": appointment["id"]},
@@ -174,10 +185,14 @@ class FrontDeskAgent:
                 AppointmentStatus.DEPOSIT_PAID.value
             ]}
         }, {"_id": 0})
-        
+
         if not appointment:
             return "You don't have any active appointments to cancel.", {"action": "no_appointment"}
-        
+
+        current_status = appointment.get("status", "pending")
+        if not self._is_valid_transition(current_status, AppointmentStatus.CANCELLED.value):
+            return "Your appointment cannot be cancelled at this time.", {"action": "invalid_transition"}
+
         # Update appointment status
         await self.db.appointments.update_one(
             {"id": appointment["id"]},
@@ -370,38 +385,32 @@ class NoShowEnforcementAgent:
         return payment_link.url
     
     async def process_no_show(self, appointment_id: str):
-        """Mark appointment as no-show and update client stats"""
+        """Handle no-show side-effects (client stats, revenue event).
+
+        NOTE: The caller (update_appointment_status endpoint) already sets the
+        appointment status to 'no_show'.  This method must NOT re-write the
+        status to avoid a race condition with concurrent requests.
+        """
         appointment = await self.db.appointments.find_one(
-            {"id": appointment_id},
+            {"id": appointment_id, "shop_id": self.shop.id},
             {"_id": 0}
         )
-        
+
         if not appointment:
             return
-        
-        # Update appointment
-        await self.db.appointments.update_one(
-            {"id": appointment_id},
-            {
-                "$set": {
-                    "status": AppointmentStatus.NO_SHOW.value,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }
-            }
-        )
-        
+
         # Update client no-show count
         await self.db.clients.update_one(
-            {"id": appointment["client_id"]},
+            {"id": appointment["client_id"], "shop_id": self.shop.id},
             {
                 "$inc": {"no_shows": 1},
                 "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
             }
         )
-        
+
         # Log event with revenue impact
         service = await self.db.services.find_one(
-            {"id": appointment["service_id"]},
+            {"id": appointment["service_id"], "shop_id": self.shop.id},
             {"_id": 0}
         )
         revenue_lost = service["price"] if service else 0
@@ -422,11 +431,14 @@ class WaitlistFillAgent:
     """
     Handles filling cancelled slots from waitlist
     """
-    
+
     def __init__(self, db, shop: Shop):
         self.db = db
         self.shop = shop
         self.sms = get_sms()
+        # Initialize compliance service for audited SMS sending
+        audit_logger = create_audit_logger(db, shop.id)
+        self.sms_service = create_sms_service(db, shop.id, audit_logger)
     
     async def find_waitlist_matches(
         self,
@@ -472,27 +484,32 @@ class WaitlistFillAgent:
             {"_id": 0}
         )
         
-        if not client or not client.get("sms_consent"):
+        if not client:
             return False
-        
+
         barber = await self.db.barbers.find_one(
             {"id": cancelled_appointment["barber_id"]},
             {"_id": 0}
         )
-        
+
         scheduled = datetime.fromisoformat(cancelled_appointment["scheduled_at"].replace("Z", "+00:00"))
-        
+
         message = MessageTemplates.WAITLIST_OFFER.format(
             date=scheduled.strftime('%B %d'),
             time=scheduled.strftime('%I:%M %p'),
             barber=barber["name"] if barber else "our team"
         )
-        
-        # Send SMS
-        response = await self.sms.send_sms(SMSMessage(
-            to=client["phone"],
-            body=message
-        ))
+
+        # Send SMS through compliance service (checks consent + audit logs)
+        response = await self.sms_service.send_sms(
+            client_id=client["id"],
+            to_phone=client["phone"],
+            message=message,
+        )
+
+        if not response.success:
+            logger.warning(f"Waitlist SMS blocked for client {client['id']}: {response.error}")
+            return False
         
         # Update waitlist entry
         await self.db.waitlist.update_one(
@@ -520,7 +537,7 @@ class WaitlistFillAgent:
     async def process_cancellation(self, appointment_id: str):
         """Process a cancellation and attempt to fill from waitlist"""
         appointment = await self.db.appointments.find_one(
-            {"id": appointment_id},
+            {"id": appointment_id, "shop_id": self.shop.id},
             {"_id": 0}
         )
         
