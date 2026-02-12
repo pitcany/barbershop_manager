@@ -143,8 +143,16 @@ async def get_availability(
         start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
     end = start + timedelta(days=days)
-    slots = await scheduler.get_available_slots(start_date=start, end_date=end, barber_id=barber_id)
-    return {"slots": slots, "start": start.isoformat(), "end": end.isoformat()}
+    
+    # Gather slots for each day in the range
+    all_slots = []
+    current_day = start
+    while current_day < end:
+        day_slots = await scheduler.get_available_slots(date=current_day, barber_id=barber_id)
+        all_slots.extend([s.to_dict() for s in day_slots])
+        current_day += timedelta(days=1)
+    
+    return {"slots": all_slots, "start": start.isoformat(), "end": end.isoformat()}
 
 
 @router.get("/scheduling/barber/{barber_id}/schedule")
@@ -169,7 +177,14 @@ async def get_barber_schedule(
         start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
     end = start + timedelta(days=days)
-    slots = await scheduler.get_available_slots(start_date=start, end_date=end, barber_id=barber_id)
+    
+    # Gather slots for each day in the range
+    all_slots = []
+    current_day = start
+    while current_day < end:
+        day_slots = await scheduler.get_available_slots(date=current_day, barber_id=barber_id)
+        all_slots.extend([s.to_dict() for s in day_slots])
+        current_day += timedelta(days=1)
 
     appointments = await db.appointments.find(
         {"shop_id": shop.id, "barber_id": barber_id, "scheduled_at": {"$gte": start.isoformat(), "$lte": end.isoformat()}, "status": {"$nin": ["cancelled"]}},
@@ -182,7 +197,7 @@ async def get_barber_schedule(
         service = await db.services.find_one({"id": apt.get("service_id")}, {"_id": 0, "name": 1})
         apt["service_name"] = service["name"] if service else "Unknown"
 
-    return {"barber": barber, "available_slots": slots, "booked_appointments": appointments}
+    return {"barber": barber, "available_slots": all_slots, "booked_appointments": appointments}
 
 
 @router.post("/scheduling/validate-slot")
