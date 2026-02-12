@@ -16,9 +16,10 @@ import {
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/clients", label: "Clients", icon: Users },
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
   { path: "/appointments", label: "Appointments", icon: Calendar },
-  { path: "/waitlist", label: "Waitlist", icon: Users },
+  { path: "/waitlist", label: "Waitlist", icon: Calendar },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 

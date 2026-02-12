@@ -12,6 +12,8 @@ import AppointmentsPage from "./pages/AppointmentsPage";
 import WaitlistPage from "./pages/WaitlistPage";
 import SettingsPage from "./pages/SettingsPage";
 import SMSConsentPage from "./pages/SMSConsentPage";
+import ClientsPage from "./pages/ClientsPage";
+import ClientDetailPage from "./pages/ClientDetailPage";
 
 // Auth Context
 const AuthContext = createContext(null);
