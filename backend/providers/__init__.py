@@ -71,12 +71,15 @@ def get_email_provider(db=None) -> EmailProvider:
 
 
 def get_payment_provider(webhook_url: str = "") -> PaymentProvider:
-    """Get payment provider based on Stripe key availability"""
+    """Get payment provider based on STRIPE_ENABLED flag and key availability"""
+    stripe_enabled = _is_true(os.environ.get("STRIPE_ENABLED"))
     stripe_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
     
-    if stripe_key:
+    if stripe_enabled and stripe_key:
         logger.info("Using Stripe payment provider")
         return StripePaymentProvider(webhook_url)
+    elif stripe_enabled:
+        logger.warning("STRIPE_ENABLED=true but no API key found, falling back to mock")
     
     logger.info("Using Mock Payment provider")
     return MockPaymentProvider()

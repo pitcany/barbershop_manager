@@ -72,18 +72,15 @@ class StripePaymentProvider(PaymentProvider):
     
     def __init__(self, webhook_url: str = ""):
         self.api_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
-        self.webhook_url = webhook_url
-        self.checkout = None
+        self.default_webhook_url = webhook_url
         
-        if self.api_key:
-            try:
-                from emergentintegrations.payments.stripe.checkout import StripeCheckout
-                self.checkout = StripeCheckout(api_key=self.api_key, webhook_url=webhook_url)
-                logger.info("Stripe payment provider initialized")
-            except ImportError:
-                logger.warning("emergentintegrations not installed")
-        else:
+        if not self.api_key:
             logger.warning("Stripe API key not found")
+    
+    def _get_checkout(self, webhook_url: str = "") -> "StripeCheckout":
+        from emergentintegrations.payments.stripe.checkout import StripeCheckout
+        url = webhook_url or self.default_webhook_url
+        return StripeCheckout(api_key=self.api_key, webhook_url=url)
     
     async def create_payment_link(
         self,
@@ -93,11 +90,19 @@ class StripePaymentProvider(PaymentProvider):
         cancel_url: str,
         metadata: Dict[str, str]
     ) -> PaymentLink:
-        if not self.checkout:
+        if not self.api_key:
             raise Exception("Stripe not configured")
         
         try:
             from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest
+            
+            # Derive webhook_url from success_url's origin
+            from urllib.parse import urlparse
+            parsed = urlparse(success_url)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            webhook_url = f"{origin}/api/webhooks/stripe"
+            
+            checkout = self._get_checkout(webhook_url)
             
             request = CheckoutSessionRequest(
                 amount=float(amount),
@@ -107,7 +112,7 @@ class StripePaymentProvider(PaymentProvider):
                 metadata=metadata
             )
             
-            response = await self.checkout.create_checkout_session(request)
+            response = await checkout.create_checkout_session(request)
             
             logger.info(f"[STRIPE] Created payment session: {response.session_id}")
             
@@ -120,7 +125,7 @@ class StripePaymentProvider(PaymentProvider):
             raise
     
     async def get_payment_status(self, session_id: str) -> PaymentStatus:
-        if not self.checkout:
+        if not self.api_key:
             return PaymentStatus(
                 status="unknown",
                 payment_status="unknown",
@@ -129,7 +134,8 @@ class StripePaymentProvider(PaymentProvider):
             )
         
         try:
-            status = await self.checkout.get_checkout_status(session_id)
+            checkout = self._get_checkout()
+            status = await checkout.get_checkout_status(session_id)
             
             return PaymentStatus(
                 status=status.status,
@@ -148,16 +154,19 @@ class StripePaymentProvider(PaymentProvider):
             )
     
     async def handle_webhook(self, request_body: bytes, signature: str) -> Dict[str, Any]:
-        if not self.checkout:
+        if not self.api_key:
             return {"error": "Stripe not configured"}
         
         try:
-            from fastapi import Request
-            # Note: handle_webhook expects specific request format
-            # For now, return basic acknowledgment
+            checkout = self._get_checkout()
+            webhook_response = await checkout.handle_webhook(request_body, signature)
+            
             return {
-                "event_type": "webhook_received",
-                "status": "acknowledged"
+                "event_type": webhook_response.event_type,
+                "event_id": webhook_response.event_id,
+                "session_id": webhook_response.session_id,
+                "payment_status": webhook_response.payment_status,
+                "metadata": webhook_response.metadata
             }
         except Exception as e:
             logger.error(f"[STRIPE] Webhook error: {e}")
