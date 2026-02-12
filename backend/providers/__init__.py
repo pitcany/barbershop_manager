@@ -41,13 +41,25 @@ def get_sms_provider() -> SMSProvider:
     return MockSMSProvider()
 
 
-def get_calendar_provider() -> CalendarProvider:
-    """Get calendar provider based on credentials availability"""
-    creds_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+def get_calendar_provider(db=None) -> CalendarProvider:
+    """Get calendar provider based on CALENDAR_ENABLED flag and OAuth credentials"""
+    calendar_enabled = _is_true(os.environ.get("CALENDAR_ENABLED"))
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
     
-    if creds_path and os.path.exists(creds_path):
-        logger.info("Using Google Calendar provider")
-        return GoogleCalendarProvider()
+    # Check for OAuth credentials
+    if calendar_enabled and client_id and client_secret:
+        logger.info("Using Google Calendar provider (OAuth2)")
+        return GoogleCalendarProvider(db=db)
+    
+    # Fall back to service account if available
+    creds_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if calendar_enabled and creds_path and os.path.exists(creds_path):
+        logger.info("Using Google Calendar provider (Service Account)")
+        return GoogleCalendarProvider(db=db)
+    
+    if calendar_enabled:
+        logger.warning("CALENDAR_ENABLED=true but no credentials found, falling back to mock")
     
     logger.info("Using Mock Calendar provider")
     return MockCalendarProvider()
