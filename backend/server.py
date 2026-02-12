@@ -841,6 +841,150 @@ async def update_client(
     return updated
 
 
+@api_router.get("/clients/{client_id}/history")
+async def get_client_history(
+    client_id: str,
+    shop: Shop = Depends(get_shop)
+):
+    """
+    Get comprehensive client history including appointments, messages, and stats.
+    """
+    # Get client
+    client = await db.clients.find_one(
+        {"id": client_id, "shop_id": shop.id},
+        {"_id": 0}
+    )
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    
+    # Get appointments (last 20)
+    appointments = await db.appointments.find(
+        {"client_id": client_id, "shop_id": shop.id},
+        {"_id": 0}
+    ).sort("scheduled_at", -1).limit(20).to_list(20)
+    
+    # Enrich appointments with service/barber info
+    for apt in appointments:
+        service = await db.services.find_one({"id": apt.get("service_id")}, {"_id": 0, "name": 1, "price": 1})
+        barber = await db.barbers.find_one({"id": apt.get("barber_id")}, {"_id": 0, "name": 1})
+        apt["service"] = service
+        apt["barber"] = barber
+    
+    # Get messages (last 50)
+    messages = await db.messages.find(
+        {"client_id": client_id, "shop_id": shop.id},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(50).to_list(50)
+    
+    # Calculate stats
+    total_appointments = await db.appointments.count_documents({
+        "client_id": client_id, "shop_id": shop.id
+    })
+    completed_appointments = await db.appointments.count_documents({
+        "client_id": client_id, "shop_id": shop.id, "status": "completed"
+    })
+    no_shows = await db.appointments.count_documents({
+        "client_id": client_id, "shop_id": shop.id, "status": "no_show"
+    })
+    cancelled = await db.appointments.count_documents({
+        "client_id": client_id, "shop_id": shop.id, "status": "cancelled"
+    })
+    
+    # Total spent (from completed appointments)
+    spent_pipeline = [
+        {"$match": {"client_id": client_id, "shop_id": shop.id, "status": "completed"}},
+        {"$group": {"_id": None, "total": {"$sum": "$price"}}}
+    ]
+    spent_result = await db.appointments.aggregate(spent_pipeline).to_list(1)
+    total_spent = spent_result[0]["total"] if spent_result else 0
+    
+    # Check if on waitlist
+    waitlist_entry = await db.waitlist.find_one(
+        {"client_id": client_id, "shop_id": shop.id, "active": True},
+        {"_id": 0}
+    )
+    
+    return {
+        "client": client,
+        "appointments": appointments,
+        "messages": messages,
+        "stats": {
+            "total_appointments": total_appointments,
+            "completed_appointments": completed_appointments,
+            "no_shows": no_shows,
+            "cancelled": cancelled,
+            "no_show_rate": round((no_shows / total_appointments * 100) if total_appointments > 0 else 0, 1),
+            "total_spent": total_spent
+        },
+        "waitlist_entry": waitlist_entry
+    }
+
+
+@api_router.post("/clients/{client_id}/waitlist")
+async def add_client_to_waitlist(
+    client_id: str,
+    service_id: str,
+    preferred_date: str,
+    barber_id: Optional[str] = None,
+    flexible_hours: int = 2,
+    shop: Shop = Depends(get_shop)
+):
+    """Add a client to the waitlist."""
+    # Validate client
+    client = await db.clients.find_one(
+        {"id": client_id, "shop_id": shop.id},
+        {"_id": 0, "id": 1}
+    )
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    
+    # Validate service
+    service = await db.services.find_one(
+        {"id": service_id, "shop_id": shop.id},
+        {"_id": 0, "id": 1}
+    )
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    # Check if already on waitlist for similar date
+    existing = await db.waitlist.find_one({
+        "client_id": client_id,
+        "shop_id": shop.id,
+        "active": True
+    })
+    if existing:
+        raise HTTPException(status_code=409, detail="Client is already on the waitlist")
+    
+    # Parse date
+    try:
+        pref_date = datetime.fromisoformat(preferred_date.replace("Z", "+00:00"))
+        if pref_date.tzinfo is None:
+            pref_date = pref_date.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid preferred_date format")
+    
+    now_iso = datetime.now(timezone.utc).isoformat()
+    entry_id = str(uuid.uuid4())
+    
+    entry = {
+        "id": entry_id,
+        "shop_id": shop.id,
+        "client_id": client_id,
+        "service_id": service_id,
+        "barber_id": barber_id,
+        "preferred_date": pref_date.isoformat(),
+        "flexible_hours": flexible_hours,
+        "active": True,
+        "contact_attempts": 0,
+        "created_at": now_iso
+    }
+    
+    await db.waitlist.insert_one(entry)
+    entry.pop("_id", None)
+    
+    return entry
+
+
 # ==================== CONVERSATION ENDPOINTS ====================
 
 @api_router.get("/conversations")
