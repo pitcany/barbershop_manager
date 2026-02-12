@@ -52,6 +52,7 @@ from revenue_logger import (
     log_no_show_fee_on_payment_success,
     log_waitlist_fill_on_booking_success
 )
+from scheduling import create_scheduling_engine, SchedulingEngine
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
@@ -498,12 +499,149 @@ async def get_allowed_transitions(shop: Shop = Depends(get_shop)):
     }
 
 
+# ==================== SCHEDULING / AVAILABILITY ENDPOINTS ====================
+
+@api_router.get("/scheduling/availability")
+async def get_availability(
+    shop: Shop = Depends(get_shop),
+    date: str = None,
+    barber_id: Optional[str] = None,
+    service_id: Optional[str] = None
+):
+    """
+    Get available time slots for a given date.
+
+    Query params:
+    - date: ISO date string (YYYY-MM-DD), defaults to today
+    - barber_id: Optional specific barber
+    - service_id: Optional service (used to determine duration)
+    """
+    # Parse date
+    if date:
+        try:
+            target_date = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    else:
+        target_date = datetime.now(timezone.utc)
+
+    # Get service duration
+    duration = 30  # Default
+    if service_id:
+        service = await db.services.find_one(
+            {"id": service_id, "shop_id": shop.id},
+            {"_id": 0, "duration_minutes": 1}
+        )
+        if service:
+            duration = service.get("duration_minutes", 30)
+
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+    slots = await scheduler.get_available_slots(target_date, barber_id, duration)
+
+    return {
+        "date": target_date.date().isoformat(),
+        "duration_minutes": duration,
+        "slots": [slot.to_dict() for slot in slots]
+    }
+
+
+@api_router.get("/scheduling/barber/{barber_id}/schedule")
+async def get_barber_schedule(
+    barber_id: str,
+    shop: Shop = Depends(get_shop),
+    start_date: str = None,
+    end_date: str = None
+):
+    """
+    Get a barber's schedule for a date range.
+
+    Defaults to the current day if no dates provided.
+    """
+    # Parse dates
+    now = datetime.now(timezone.utc)
+
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+    else:
+        start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+    else:
+        end_dt = start_dt + timedelta(days=1)
+
+    # Validate barber exists
+    barber = await db.barbers.find_one(
+        {"id": barber_id, "shop_id": shop.id},
+        {"_id": 0, "id": 1, "name": 1}
+    )
+    if not barber:
+        raise HTTPException(status_code=404, detail="Barber not found")
+
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+    appointments = await scheduler.get_barber_schedule(barber_id, start_dt, end_dt)
+
+    return {
+        "barber": barber,
+        "start_date": start_dt.isoformat(),
+        "end_date": end_dt.isoformat(),
+        "appointments": appointments
+    }
+
+
+@api_router.post("/scheduling/validate-slot")
+async def validate_slot(
+    shop: Shop = Depends(get_shop),
+    barber_id: str = None,
+    scheduled_at: str = None,
+    duration_minutes: int = 30,
+    exclude_appointment_id: Optional[str] = None
+):
+    """
+    Validate if a specific time slot is available.
+
+    Returns whether the slot can be booked and any conflict details.
+    """
+    if not barber_id or not scheduled_at:
+        raise HTTPException(status_code=400, detail="barber_id and scheduled_at are required")
+
+    try:
+        scheduled_dt = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+        if scheduled_dt.tzinfo is None:
+            scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid scheduled_at format")
+
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+    is_valid, error_msg = await scheduler.validate_appointment_slot(
+        barber_id=barber_id,
+        scheduled_at=scheduled_dt,
+        duration_minutes=duration_minutes,
+        exclude_appointment_id=exclude_appointment_id
+    )
+
+    return {
+        "valid": is_valid,
+        "error": error_msg,
+        "barber_id": barber_id,
+        "scheduled_at": scheduled_dt.isoformat(),
+        "duration_minutes": duration_minutes
+    }
+    }
+
+
 @api_router.post("/appointments")
 async def create_appointment(
     body: CreateAppointmentRequest,
     shop: Shop = Depends(get_shop)
 ):
-    """Create a new appointment."""
+    """Create a new appointment with conflict prevention."""
     # Validate client exists
     client = await db.clients.find_one(
         {"id": body.client_id, "shop_id": shop.id}, {"_id": 0, "id": 1, "no_shows": 1}
@@ -530,39 +668,22 @@ async def create_appointment(
         scheduled_dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
         if scheduled_dt.tzinfo is None:
             scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
-        if scheduled_dt < datetime.now(timezone.utc):
-            raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid scheduled_at format — use ISO 8601")
 
     duration = body.duration_minutes or service.get("duration_minutes", 30)
 
-    # Double-booking check: ensure no overlapping appointment for this barber
-    end_dt = scheduled_dt + timedelta(minutes=duration)
-    active_statuses = [
-        AppointmentStatus.PENDING.value,
-        AppointmentStatus.CONFIRMED.value,
-        AppointmentStatus.DEPOSIT_PENDING.value,
-        AppointmentStatus.DEPOSIT_PAID.value,
-    ]
-    conflict = await db.appointments.find_one({
-        "shop_id": shop.id,
-        "barber_id": body.barber_id,
-        "status": {"$in": active_statuses},
-        # Overlap condition: existing.start < new.end AND existing_end > new.start
-        # We approximate existing_end using $expr since duration is per-doc
-        "scheduled_at": {"$lt": end_dt.isoformat()},
-    }, {"_id": 0, "id": 1, "scheduled_at": 1, "duration_minutes": 1})
+    # === CONFLICT PREVENTION ===
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+    is_valid, error_msg = await scheduler.validate_appointment_slot(
+        barber_id=body.barber_id,
+        scheduled_at=scheduled_dt,
+        duration_minutes=duration
+    )
 
-    if conflict:
-        # Verify actual overlap accounting for existing appointment's duration
-        conflict_start = datetime.fromisoformat(conflict["scheduled_at"].replace("Z", "+00:00"))
-        conflict_end = conflict_start + timedelta(minutes=conflict.get("duration_minutes", 30))
-        if conflict_start < end_dt and conflict_end > scheduled_dt:
-            raise HTTPException(
-                status_code=409,
-                detail="This barber already has an appointment during that time slot"
-            )
+    if not is_valid:
+        raise HTTPException(status_code=409, detail=error_msg)
+
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -724,6 +845,150 @@ async def update_client(
     return updated
 
 
+@api_router.get("/clients/{client_id}/history")
+async def get_client_history(
+    client_id: str,
+    shop: Shop = Depends(get_shop)
+):
+    """
+    Get comprehensive client history including appointments, messages, and stats.
+    """
+    # Get client
+    client = await db.clients.find_one(
+        {"id": client_id, "shop_id": shop.id},
+        {"_id": 0}
+    )
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    
+    # Get appointments (last 20)
+    appointments = await db.appointments.find(
+        {"client_id": client_id, "shop_id": shop.id},
+        {"_id": 0}
+    ).sort("scheduled_at", -1).limit(20).to_list(20)
+    
+    # Enrich appointments with service/barber info
+    for apt in appointments:
+        service = await db.services.find_one({"id": apt.get("service_id")}, {"_id": 0, "name": 1, "price": 1})
+        barber = await db.barbers.find_one({"id": apt.get("barber_id")}, {"_id": 0, "name": 1})
+        apt["service"] = service
+        apt["barber"] = barber
+    
+    # Get messages (last 50)
+    messages = await db.messages.find(
+        {"client_id": client_id, "shop_id": shop.id},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(50).to_list(50)
+    
+    # Calculate stats
+    total_appointments = await db.appointments.count_documents({
+        "client_id": client_id, "shop_id": shop.id
+    })
+    completed_appointments = await db.appointments.count_documents({
+        "client_id": client_id, "shop_id": shop.id, "status": "completed"
+    })
+    no_shows = await db.appointments.count_documents({
+        "client_id": client_id, "shop_id": shop.id, "status": "no_show"
+    })
+    cancelled = await db.appointments.count_documents({
+        "client_id": client_id, "shop_id": shop.id, "status": "cancelled"
+    })
+    
+    # Total spent (from completed appointments)
+    spent_pipeline = [
+        {"$match": {"client_id": client_id, "shop_id": shop.id, "status": "completed"}},
+        {"$group": {"_id": None, "total": {"$sum": "$price"}}}
+    ]
+    spent_result = await db.appointments.aggregate(spent_pipeline).to_list(1)
+    total_spent = spent_result[0]["total"] if spent_result else 0
+    
+    # Check if on waitlist
+    waitlist_entry = await db.waitlist.find_one(
+        {"client_id": client_id, "shop_id": shop.id, "active": True},
+        {"_id": 0}
+    )
+    
+    return {
+        "client": client,
+        "appointments": appointments,
+        "messages": messages,
+        "stats": {
+            "total_appointments": total_appointments,
+            "completed_appointments": completed_appointments,
+            "no_shows": no_shows,
+            "cancelled": cancelled,
+            "no_show_rate": round((no_shows / total_appointments * 100) if total_appointments > 0 else 0, 1),
+            "total_spent": total_spent
+        },
+        "waitlist_entry": waitlist_entry
+    }
+
+
+@api_router.post("/clients/{client_id}/waitlist")
+async def add_client_to_waitlist(
+    client_id: str,
+    service_id: str,
+    preferred_date: str,
+    barber_id: Optional[str] = None,
+    flexible_hours: int = 2,
+    shop: Shop = Depends(get_shop)
+):
+    """Add a client to the waitlist."""
+    # Validate client
+    client = await db.clients.find_one(
+        {"id": client_id, "shop_id": shop.id},
+        {"_id": 0, "id": 1}
+    )
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    
+    # Validate service
+    service = await db.services.find_one(
+        {"id": service_id, "shop_id": shop.id},
+        {"_id": 0, "id": 1}
+    )
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    # Check if already on waitlist for similar date
+    existing = await db.waitlist.find_one({
+        "client_id": client_id,
+        "shop_id": shop.id,
+        "active": True
+    })
+    if existing:
+        raise HTTPException(status_code=409, detail="Client is already on the waitlist")
+    
+    # Parse date
+    try:
+        pref_date = datetime.fromisoformat(preferred_date.replace("Z", "+00:00"))
+        if pref_date.tzinfo is None:
+            pref_date = pref_date.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid preferred_date format")
+    
+    now_iso = datetime.now(timezone.utc).isoformat()
+    entry_id = str(uuid.uuid4())
+    
+    entry = {
+        "id": entry_id,
+        "shop_id": shop.id,
+        "client_id": client_id,
+        "service_id": service_id,
+        "barber_id": barber_id,
+        "preferred_date": pref_date.isoformat(),
+        "flexible_hours": flexible_hours,
+        "active": True,
+        "contact_attempts": 0,
+        "created_at": now_iso
+    }
+    
+    await db.waitlist.insert_one(entry)
+    entry.pop("_id", None)
+    
+    return entry
+
+
 # ==================== CONVERSATION ENDPOINTS ====================
 
 @api_router.get("/conversations")
@@ -777,6 +1042,103 @@ async def get_conversation(client_id: str, shop: Shop = Depends(get_shop), limit
     )
     
     return {"messages": messages, "client": client}
+
+
+@api_router.get("/conversations/poll/new")
+async def poll_new_messages(
+    shop: Shop = Depends(get_shop),
+    since: str = None,
+    client_id: Optional[str] = None
+):
+    """
+    Poll for new messages since a given timestamp.
+    
+    Used for real-time updates without WebSockets.
+    
+    Args:
+        since: ISO timestamp - return messages after this time
+        client_id: Optional - filter to specific conversation
+    
+    Returns new messages and the latest timestamp for next poll.
+    """
+    query = {"shop_id": shop.id}
+    
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            query["created_at"] = {"$gt": since_dt.isoformat()}
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid 'since' timestamp format")
+    
+    if client_id:
+        query["client_id"] = client_id
+    
+    messages = await db.messages.find(
+        query, {"_id": 0}
+    ).sort("created_at", 1).limit(100).to_list(100)
+    
+    # Get the latest timestamp for next poll
+    latest_timestamp = None
+    if messages:
+        latest_timestamp = messages[-1].get("created_at")
+    
+    # Enrich with client info if not filtering by client
+    if not client_id and messages:
+        client_ids = list({m.get("client_id") for m in messages if m.get("client_id")})
+        clients_list = await db.clients.find(
+            {"id": {"$in": client_ids}},
+            {"_id": 0, "id": 1, "name": 1, "phone": 1}
+        ).to_list(len(client_ids)) if client_ids else []
+        clients_map = {c["id"]: c for c in clients_list}
+        
+        for msg in messages:
+            msg["client"] = clients_map.get(msg.get("client_id"))
+    
+    return {
+        "messages": messages,
+        "count": len(messages),
+        "latest_timestamp": latest_timestamp,
+        "poll_interval_ms": 3000  # Suggested poll interval
+    }
+
+
+@api_router.get("/conversations/activity/live")
+async def get_live_activity(
+    shop: Shop = Depends(get_shop),
+    minutes: int = 30
+):
+    """
+    Get recent conversation activity for the live dashboard view.
+    
+    Shows the most recent messages across all conversations,
+    useful for seeing the "autopilot in action".
+    """
+    since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    
+    messages = await db.messages.find({
+        "shop_id": shop.id,
+        "created_at": {"$gte": since.isoformat()}
+    }, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    
+    # Enrich with client info
+    client_ids = list({m.get("client_id") for m in messages if m.get("client_id")})
+    clients_list = await db.clients.find(
+        {"id": {"$in": client_ids}},
+        {"_id": 0, "id": 1, "name": 1, "phone": 1}
+    ).to_list(len(client_ids)) if client_ids else []
+    clients_map = {c["id"]: c for c in clients_list}
+    
+    for msg in messages:
+        msg["client"] = clients_map.get(msg.get("client_id"))
+    
+    # Reverse to show chronological order
+    messages.reverse()
+    
+    return {
+        "messages": messages,
+        "since": since.isoformat(),
+        "count": len(messages)
+    }
 
 
 # ==================== WAITLIST ENDPOINTS ====================

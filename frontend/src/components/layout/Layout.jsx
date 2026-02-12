@@ -12,11 +12,13 @@ import {
   LogOut,
   Scissors,
   Menu,
-  X
+  X,
+  User
 } from "lucide-react";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/clients", label: "Clients", icon: User },
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
   { path: "/appointments", label: "Appointments", icon: Calendar },
   { path: "/clients", label: "Clients", icon: UserRound },

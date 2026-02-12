@@ -13,6 +13,7 @@ import WaitlistPage from "./pages/WaitlistPage";
 import SettingsPage from "./pages/SettingsPage";
 import SMSConsentPage from "./pages/SMSConsentPage";
 import ClientsPage from "./pages/ClientsPage";
+import ClientDetailPage from "./pages/ClientDetailPage";
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -144,14 +145,19 @@ function App() {
                 <AppointmentsPage />
               </ProtectedRoute>
             } />
-            <Route path="/waitlist" element={
-              <ProtectedRoute>
-                <WaitlistPage />
-              </ProtectedRoute>
-            } />
             <Route path="/clients" element={
               <ProtectedRoute>
                 <ClientsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/clients/:clientId" element={
+              <ProtectedRoute>
+                <ClientDetailPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/waitlist" element={
+              <ProtectedRoute>
+                <WaitlistPage />
               </ProtectedRoute>
             } />
             <Route path="/settings" element={
