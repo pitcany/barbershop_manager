@@ -71,7 +71,6 @@ function ResultModal({ title, data, onClose }) {
 }
 
 export default function JobsPage() {
-  const { token } = useAuth();
   const [jobs, setJobs] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -86,13 +85,11 @@ export default function JobsPage() {
     setLoading(true);
     try {
       const [statusRes, historyRes] = await Promise.all([
-        fetch(`${API}/api/jobs/status`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API}/api/reporting/jobs-history?limit=20`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API}/jobs/status`),
+        axios.get(`${API}/reporting/jobs-history?limit=20`),
       ]);
-      const statusData = await statusRes.json();
-      const historyData = await historyRes.json();
-      setJobs(statusData.jobs || []);
-      setHistory(historyData.entries || []);
+      setJobs(statusRes.data.jobs || []);
+      setHistory(historyRes.data.entries || []);
     } catch (e) {
       console.error("Failed to load jobs", e);
     }
@@ -102,14 +99,10 @@ export default function JobsPage() {
   const runJob = async (jobId) => {
     setRunningJob(jobId);
     try {
-      const endpoint = jobId === "appointment_reminders" ? "/api/jobs/reminders/run" : "/api/jobs/daily-summary/run";
-      const res = await fetch(`${API}${endpoint}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      setModal({ title: `Run Result: ${jobId}`, data });
-      fetchAll(); // Refresh history
+      const endpoint = jobId === "appointment_reminders" ? "/jobs/reminders/run" : "/jobs/daily-summary/run";
+      const res = await axios.post(`${API}${endpoint}`);
+      setModal({ title: `Run Result: ${jobId}`, data: res.data });
+      fetchAll();
     } catch (e) {
       setModal({ title: "Error", data: { error: e.message } });
     }
@@ -118,12 +111,9 @@ export default function JobsPage() {
 
   const previewJob = async (jobId) => {
     try {
-      const endpoint = jobId === "appointment_reminders" ? "/api/jobs/reminders/preview" : "/api/jobs/daily-summary/preview";
-      const res = await fetch(`${API}${endpoint}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      setModal({ title: `Preview: ${jobId}`, data });
+      const endpoint = jobId === "appointment_reminders" ? "/jobs/reminders/preview" : "/jobs/daily-summary/preview";
+      const res = await axios.get(`${API}${endpoint}`);
+      setModal({ title: `Preview: ${jobId}`, data: res.data });
     } catch (e) {
       setModal({ title: "Error", data: { error: e.message } });
     }
