@@ -162,6 +162,16 @@ function App() {
                 <WaitlistPage />
               </ProtectedRoute>
             } />
+            <Route path="/reporting" element={
+              <ProtectedRoute>
+                <ReportingPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/jobs" element={
+              <ProtectedRoute>
+                <JobsPage />
+              </ProtectedRoute>
+            } />
             <Route path="/settings" element={
               <ProtectedRoute>
                 <SettingsPage />
