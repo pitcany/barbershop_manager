@@ -2002,6 +2002,9 @@ async def seed_demo_data():
         "confirmation_window_hours": 24,
         "cancellation_window_hours": 4,
         "max_messages_per_day": 4,
+        "retention_enabled": True,
+        "retention_lapse_weeks": 4,
+        "retention_cooldown_days": 7,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
