@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../App";
 import { Button } from "../components/ui/button";
@@ -19,8 +19,13 @@ export default function LoginPage() {
   const from = location.state?.from?.pathname || "/";
 
   // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate(from, { replace: true });
+    }
+  }, [isAuthenticated, navigate, from]);
+
   if (isAuthenticated) {
-    navigate(from, { replace: true });
     return null;
   }
 
@@ -43,7 +48,7 @@ export default function LoginPage() {
     <div 
       className="min-h-screen flex items-center justify-center p-4 relative"
       style={{
-        backgroundImage: `linear-gradient(to bottom, rgba(9, 9, 11, 0.85), rgba(9, 9, 11, 0.95)), url('https://images.unsplash.com/photo-1768938896401-fe52fd18d3af?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxiYXJiZXIlMjBzaG9wJTIwaW50ZXJpb3IlMjBkYXJrJTIwYWVzdGhldGljfGVufDB8fHx8MTc3MDQwNDUwM3ww&ixlib=rb-4.1.0&q=85')`,
+        backgroundImage: `linear-gradient(to bottom, rgba(9, 9, 11, 0.85), rgba(9, 9, 11, 0.95)), url('https://images.unsplash.com/photo-1768938896401-fe52fd18d3af?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxiYXJiZXIlMjBzaG9wJTIwaW50ZXJpb3IlMjBkYXJrJTIwYWVzdGhldGljfGVufDB8fHx8MTc3MDQwNDUwM3ww&ixlib=rb-4.1.0&w=1920&q=60&fm=webp')`,
         backgroundSize: 'cover',
         backgroundPosition: 'center'
       }}
