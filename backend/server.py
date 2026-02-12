@@ -50,6 +50,8 @@ from revenue_logger import (
     log_waitlist_fill_on_booking_success
 )
 from scheduling import create_scheduling_engine, SchedulingEngine
+from scheduler import start_scheduler, stop_scheduler, get_job_status
+from owner_ops_agent import OwnerOpsAgent
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
@@ -1773,7 +1775,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database with seed data if empty"""
+    """Initialize database with seed data if empty, then start scheduler"""
     logger.info("Starting Barbershop Autopilot...")
     
     # Check if shop exists
@@ -1783,7 +1785,17 @@ async def startup_event():
         logger.info("Seeding demo data...")
         await seed_demo_data()
     
+    # Start background scheduler
+    start_scheduler(db)
+    
     logger.info("Barbershop Autopilot ready!")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop background scheduler on shutdown"""
+    stop_scheduler()
+    logger.info("Barbershop Autopilot stopped.")
 
 
 async def seed_demo_data():
