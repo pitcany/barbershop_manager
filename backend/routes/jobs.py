@@ -47,7 +47,7 @@ async def preview_reminders(shop: Shop = Depends(get_shop)):
 @router.post("/jobs/daily-summary/run")
 async def run_daily_summary(shop: Shop = Depends(get_shop)):
     agent = OwnerOpsAgent(db, shop.model_dump())
-    result = await agent.run_daily_summary(shop.id)
+    result = await agent.send_daily_summary()
     return {"message": "Daily summary executed", "result": result}
 
 
