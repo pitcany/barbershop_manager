@@ -395,6 +395,41 @@ class CreateAppointmentRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class CreateBarberRequest(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class UpdateBarberRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class CreateServiceRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    duration_minutes: int = 30
+    price: float
+
+
+class UpdateServiceRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    price: Optional[float] = None
+    active: Optional[bool] = None
+
+
+class UpdateShopDetailsRequest(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+
+
 class CreateClientRequest(BaseModel):
     name: str
     phone: str
