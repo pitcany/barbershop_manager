@@ -19,6 +19,10 @@ import uuid
 import jwt
 from passlib.context import CryptContext
 
+# ==================== PAGINATION CONSTANTS ====================
+
+MAX_LIMIT = 200  # Server-side cap on limit parameter
+
 # Load environment
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -30,7 +34,7 @@ from models import (
     LoginRequest, TokenResponse, SMSConsentRequest, PolicyUpdate, SendTestSMSRequest,
     SendTestEmailRequest, AdminUser, EmailOutbox, AuditProvider, AuditAction,
     RevenueSource, CreateAppointmentRequest, CreateClientRequest, UpdateClientRequest,
-    CreateWaitlistRequest
+    CreateWaitlistRequest, ALLOWED_TRANSITIONS
 )
 
 # Import providers and agents
@@ -78,6 +82,15 @@ app = FastAPI(
 
 # Create API router
 api_router = APIRouter(prefix="/api")
+
+
+# ==================== PAGINATION HELPERS ====================
+
+def clamp_pagination(limit: int, skip: int, max_limit: int = MAX_LIMIT) -> tuple:
+    """Clamp limit and skip to safe ranges. Returns (limit, skip)."""
+    limit = max(1, min(limit, max_limit))
+    skip = max(0, skip)
+    return limit, skip
 
 
 # ==================== RATE LIMITING ====================
@@ -312,6 +325,7 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
 @api_router.get("/dashboard/revenue-chart")
 async def get_revenue_chart(shop: Shop = Depends(get_shop), days: int = 30):
     """Get revenue data for chart"""
+    days = max(1, min(days, 365))
     now = datetime.now(timezone.utc)
     start_date = now - timedelta(days=days)
     
@@ -366,16 +380,18 @@ async def list_appointments(
     skip: int = 0
 ):
     """List appointments"""
+    limit, skip = clamp_pagination(limit, skip)
+
     query = {"shop_id": shop.id}
-    
+
     if status:
         query["status"] = status
-    
+
     if date:
         if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
             raise HTTPException(status_code=400, detail="Date must be in YYYY-MM-DD format")
         query["scheduled_at"] = {"$gte": date, "$lt": f"{date}T23:59:59"}
-    
+
     appointments = await db.appointments.find(
         query, {"_id": 0}
     ).sort("scheduled_at", -1).skip(skip).limit(limit).to_list(limit)
@@ -415,19 +431,6 @@ async def get_appointment(appointment_id: str, shop: Shop = Depends(get_shop)):
         raise HTTPException(status_code=404, detail="Appointment not found")
     
     return appointment
-
-
-ALLOWED_TRANSITIONS = {
-    "pending": {"confirmed", "cancelled", "deposit_pending"},
-    "confirmed": {"completed", "cancelled", "no_show", "rescheduled"},
-    "deposit_pending": {"deposit_paid", "cancelled"},
-    "deposit_paid": {"confirmed", "completed", "cancelled", "no_show"},
-    "rescheduled": {"pending", "confirmed", "cancelled"},
-    # Terminal states — no outgoing transitions
-    "completed": set(),
-    "no_show": set(),
-    "cancelled": set(),
-}
 
 
 @api_router.patch("/appointments/{appointment_id}/status")
@@ -498,6 +501,15 @@ async def update_appointment_status(
     return {"message": "Status updated"}
 
 
+@api_router.get("/appointments/allowed-transitions")
+async def get_allowed_transitions(shop: Shop = Depends(get_shop)):
+    """Return the appointment state machine transitions for frontend validation."""
+    return {
+        status: sorted(targets)
+        for status, targets in ALLOWED_TRANSITIONS.items()
+    }
+
+
 @api_router.post("/appointments")
 async def create_appointment(
     body: CreateAppointmentRequest,
@@ -536,6 +548,34 @@ async def create_appointment(
         raise HTTPException(status_code=400, detail="Invalid scheduled_at format — use ISO 8601")
 
     duration = body.duration_minutes or service.get("duration_minutes", 30)
+
+    # Double-booking check: ensure no overlapping appointment for this barber
+    end_dt = scheduled_dt + timedelta(minutes=duration)
+    active_statuses = [
+        AppointmentStatus.PENDING.value,
+        AppointmentStatus.CONFIRMED.value,
+        AppointmentStatus.DEPOSIT_PENDING.value,
+        AppointmentStatus.DEPOSIT_PAID.value,
+    ]
+    conflict = await db.appointments.find_one({
+        "shop_id": shop.id,
+        "barber_id": body.barber_id,
+        "status": {"$in": active_statuses},
+        # Overlap condition: existing.start < new.end AND existing_end > new.start
+        # We approximate existing_end using $expr since duration is per-doc
+        "scheduled_at": {"$lt": end_dt.isoformat()},
+    }, {"_id": 0, "id": 1, "scheduled_at": 1, "duration_minutes": 1})
+
+    if conflict:
+        # Verify actual overlap accounting for existing appointment's duration
+        conflict_start = datetime.fromisoformat(conflict["scheduled_at"].replace("Z", "+00:00"))
+        conflict_end = conflict_start + timedelta(minutes=conflict.get("duration_minutes", 30))
+        if conflict_start < end_dt and conflict_end > scheduled_dt:
+            raise HTTPException(
+                status_code=409,
+                detail="This barber already has an appointment during that time slot"
+            )
+
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Check deposit requirement
@@ -583,15 +623,17 @@ async def list_clients(
     skip: int = 0
 ):
     """List clients"""
+    limit, skip = clamp_pagination(limit, skip)
+
     query = {"shop_id": shop.id}
-    
+
     if search:
         escaped_search = re.escape(search)
         query["$or"] = [
             {"name": {"$regex": escaped_search, "$options": "i"}},
             {"phone": {"$regex": escaped_search}}
         ]
-    
+
     clients = await db.clients.find(
         query, {"_id": 0}
     ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
@@ -699,6 +741,7 @@ async def update_client(
 @api_router.get("/conversations")
 async def list_conversations(shop: Shop = Depends(get_shop), limit: int = 50):
     """List conversation threads (grouped by client)"""
+    limit, _ = clamp_pagination(limit, 0)
     # Get unique clients with messages, sorted by most recent
     pipeline = [
         {"$match": {"shop_id": shop.id}},
@@ -731,6 +774,7 @@ async def list_conversations(shop: Shop = Depends(get_shop), limit: int = 50):
 @api_router.get("/conversations/{client_id}")
 async def get_conversation(client_id: str, shop: Shop = Depends(get_shop), limit: int = 100):
     """Get messages for a specific client"""
+    limit, _ = clamp_pagination(limit, 0)
     messages = await db.messages.find(
         {"shop_id": shop.id, "client_id": client_id},
         {"_id": 0}
@@ -1295,11 +1339,13 @@ async def list_audit_log(
     limit: int = 100
 ):
     """List integration audit log entries"""
+    limit, _ = clamp_pagination(limit, 0)
+
     query = {"shop_id": shop.id}
-    
+
     if provider:
         query["provider"] = provider
-    
+
     entries = await db.integration_audit_log.find(
         query, {"_id": 0}
     ).sort("created_at", -1).limit(limit).to_list(limit)
@@ -1317,8 +1363,10 @@ async def list_recovered_revenue_events(
     Internal endpoint to query recovered revenue events.
     NOT for UI display - for debugging and verification only.
     """
+    limit, _ = clamp_pagination(limit, 0)
+
     query = {"shop_id": shop.id}
-    
+
     if source:
         query["source"] = source
     

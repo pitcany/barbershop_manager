@@ -2,12 +2,13 @@ import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../App";
 import { Button } from "../ui/button";
-import { 
-  LayoutDashboard, 
-  MessageSquare, 
-  Calendar, 
-  Users, 
-  Settings, 
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Calendar,
+  Users,
+  UserRound,
+  Settings,
   LogOut,
   Scissors,
   Menu,
@@ -18,6 +19,7 @@ const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
   { path: "/appointments", label: "Appointments", icon: Calendar },
+  { path: "/clients", label: "Clients", icon: UserRound },
   { path: "/waitlist", label: "Waitlist", icon: Users },
   { path: "/settings", label: "Settings", icon: Settings },
 ];

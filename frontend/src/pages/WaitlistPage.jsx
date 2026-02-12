@@ -3,8 +3,25 @@ import axios from "axios";
 import { API } from "../App";
 import Layout from "../components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import {
   Table,
   TableBody,
@@ -25,20 +42,33 @@ import {
   AlertDialogTrigger,
 } from "../components/ui/alert-dialog";
 import { toast } from "sonner";
-import { 
-  Users, 
+import {
+  Users,
   Clock,
   Calendar,
   Scissors,
   Phone,
   Trash2,
-  User
+  User,
+  Plus,
 } from "lucide-react";
 import { format } from "date-fns";
 
 export default function WaitlistPage() {
   const [waitlist, setWaitlist] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [clients, setClients] = useState([]);
+  const [services, setServices] = useState([]);
+  const [barbers, setBarbers] = useState([]);
+  const [form, setForm] = useState({
+    client_id: "",
+    service_id: "",
+    barber_id: "",
+    preferred_date: "",
+    flexible_hours: 2,
+  });
 
   useEffect(() => {
     fetchWaitlist();
@@ -53,6 +83,49 @@ export default function WaitlistPage() {
       toast.error("Failed to load waitlist");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchFormData = async () => {
+    try {
+      const [c, s, b] = await Promise.all([
+        axios.get(`${API}/clients?limit=200`),
+        axios.get(`${API}/services`),
+        axios.get(`${API}/barbers`),
+      ]);
+      setClients(c.data.clients || []);
+      setServices(s.data.services || []);
+      setBarbers(b.data.barbers || []);
+    } catch {
+      toast.error("Failed to load form data");
+    }
+  };
+
+  const openDialog = () => {
+    fetchFormData();
+    setForm({ client_id: "", service_id: "", barber_id: "", preferred_date: "", flexible_hours: 2 });
+    setDialogOpen(true);
+  };
+
+  const handleCreate = async () => {
+    if (!form.client_id || !form.service_id || !form.preferred_date) {
+      toast.error("Client, service, and preferred date are required");
+      return;
+    }
+    setCreating(true);
+    try {
+      await axios.post(`${API}/waitlist`, {
+        ...form,
+        preferred_date: new Date(form.preferred_date).toISOString(),
+      });
+      toast.success("Added to waitlist");
+      setDialogOpen(false);
+      fetchWaitlist();
+    } catch (error) {
+      const detail = error.response?.data?.detail;
+      toast.error(detail || "Failed to add to waitlist");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -84,12 +157,82 @@ export default function WaitlistPage() {
                   </p>
                 </div>
               </div>
-              <Badge variant="secondary" className="text-lg px-4 py-2 font-mono">
-                {waitlist.length}
-              </Badge>
+              <Button onClick={openDialog} data-testid="add-waitlist-btn">
+                <Plus className="w-4 h-4 mr-2" />
+                Add to Waitlist
+              </Button>
             </div>
           </CardContent>
         </Card>
+
+        {/* Add to Waitlist Dialog */}
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Add to Waitlist</DialogTitle>
+              <DialogDescription>Add a client to the waitlist for an available slot.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label>Client *</Label>
+                <Select value={form.client_id} onValueChange={(v) => setForm({ ...form, client_id: v })}>
+                  <SelectTrigger data-testid="wl-client-select"><SelectValue placeholder="Select client" /></SelectTrigger>
+                  <SelectContent>
+                    {clients.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name} ({c.phone})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Service *</Label>
+                <Select value={form.service_id} onValueChange={(v) => setForm({ ...form, service_id: v })}>
+                  <SelectTrigger data-testid="wl-service-select"><SelectValue placeholder="Select service" /></SelectTrigger>
+                  <SelectContent>
+                    {services.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Preferred Barber</Label>
+                <Select value={form.barber_id} onValueChange={(v) => setForm({ ...form, barber_id: v })}>
+                  <SelectTrigger><SelectValue placeholder="Any barber" /></SelectTrigger>
+                  <SelectContent>
+                    {barbers.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Preferred Date *</Label>
+                <Input
+                  type="datetime-local"
+                  value={form.preferred_date}
+                  onChange={(e) => setForm({ ...form, preferred_date: e.target.value })}
+                  data-testid="wl-date-input"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Flexibility (hours)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.flexible_hours}
+                  onChange={(e) => setForm({ ...form, flexible_hours: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button onClick={handleCreate} disabled={creating} data-testid="submit-waitlist-btn">
+                {creating ? "Adding..." : "Add"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Waitlist Table */}
         <Card className="bg-card border-border">
