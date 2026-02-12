@@ -73,4 +73,4 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 
 ## Credentials
 - **Admin**: username=admin, password=admin123
-- **Preview**: https://waitlist-hero.preview.emergentagent.com
+- **Preview**: https://booking-recovery.preview.emergentagent.com
