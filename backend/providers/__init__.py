@@ -111,10 +111,10 @@ def get_sms() -> SMSProvider:
     return _sms_provider
 
 
-def get_calendar() -> CalendarProvider:
+def get_calendar(db=None) -> CalendarProvider:
     global _calendar_provider
     if _calendar_provider is None:
-        _calendar_provider = get_calendar_provider()
+        _calendar_provider = get_calendar_provider(db)
     return _calendar_provider
 
 
