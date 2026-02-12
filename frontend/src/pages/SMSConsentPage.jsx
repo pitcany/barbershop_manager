@@ -5,7 +5,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Checkbox } from "../components/ui/checkbox";
-import { toast, Toaster } from "sonner";
+import { toast } from "sonner";
 import { Scissors, Phone, User, CheckCircle, MessageSquare } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -82,7 +82,6 @@ export default function SMSConsentPage() {
         className="min-h-screen flex items-center justify-center p-4"
         style={{ backgroundColor: '#09090b' }}
       >
-        <Toaster position="top-right" richColors />
         <Card className="w-full max-w-md bg-card border-border text-center">
           <CardContent className="p-8">
             <div className="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -115,7 +114,6 @@ export default function SMSConsentPage() {
         backgroundPosition: 'center'
       }}
     >
-      <Toaster position="top-right" richColors />
       <Card className="w-full max-w-md bg-card/95 backdrop-blur-sm border-border">
         <CardHeader className="text-center space-y-4">
           <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">

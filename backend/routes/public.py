@@ -341,6 +341,9 @@ async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
             "sms_consent": request.consent,
             "sms_consent_timestamp": consent_timestamp,
             "sms_consent_source": "web_form",
+            "email": None,
+            "no_shows": 0,
+            "total_appointments": 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }

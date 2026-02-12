@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import os
+from html import escape
 
 from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit
 from models import Shop, LoginRequest, TokenResponse, PolicyUpdate
@@ -182,7 +183,7 @@ async def send_test_email(request_body: "SendTestEmailRequest", shop: Shop = Dep
             </div>
             <div style="padding: 30px; background-color: #18181b; color: #fafafa;">
                 <h2 style="color: #D4AF37;">Test Email</h2>
-                <p>{request_body.message}</p>
+                <p>{escape(request_body.message)}</p>
                 <hr style="border-color: #27272a; margin: 20px 0;">
                 <p style="color: #a1a1aa; font-size: 12px;">
                     This email was sent from {shop.name} to verify SendGrid integration.

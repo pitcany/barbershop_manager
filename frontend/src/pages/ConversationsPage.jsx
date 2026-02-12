@@ -10,6 +10,7 @@ import { ScrollArea } from "../components/ui/scroll-area";
 import { Badge } from "../components/ui/badge";
 import { Switch } from "../components/ui/switch";
 import { Label } from "../components/ui/label";
+import { toast } from "sonner";
 import { 
   MessageSquare, 
   Search, 
@@ -88,6 +89,7 @@ export default function ConversationsPage() {
       setConversations(response.data.conversations);
     } catch (error) {
       console.error("Failed to fetch conversations:", error);
+      toast.error("Failed to load conversations");
     } finally {
       setLoading(false);
     }
@@ -106,6 +108,7 @@ export default function ConversationsPage() {
       }
     } catch (error) {
       console.error("Failed to fetch messages:", error);
+      toast.error("Failed to load messages");
     }
   };
 

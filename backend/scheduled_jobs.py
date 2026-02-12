@@ -72,7 +72,10 @@ class AppointmentReminderJob:
                 "client_id": apt["client_id"],
                 "appointment_id": apt["id"],
                 "direction": MessageDirection.OUTBOUND.value,
-                "content": {"$regex": "Reminder:"}
+                "$or": [
+                    {"message_type": "appointment_reminder"},
+                    {"content": {"$regex": "^Reminder:"}}
+                ]
             })
             
             if not reminder_exists:
@@ -136,7 +139,7 @@ class AppointmentReminderJob:
                 "client_id": client["id"],
                 "appointment_id": appointment["id"],
                 "direction": MessageDirection.OUTBOUND.value,
-                "message_type": "sms",
+                "message_type": "appointment_reminder",
                 "content": message,
                 "twilio_sid": response.message_id,
                 "created_at": datetime.now(timezone.utc).isoformat()
@@ -166,10 +169,14 @@ class AppointmentReminderJob:
         }
         
         for apt in appointments:
-            success = await self.send_reminder(apt)
-            if success:
-                results["sent"] += 1
-            else:
+            try:
+                success = await self.send_reminder(apt)
+                if success:
+                    results["sent"] += 1
+                else:
+                    results["failed"] += 1
+            except Exception as e:
+                logger.error(f"Unexpected error sending reminder for {apt.get('id', '?')}: {e}")
                 results["failed"] += 1
         
         logger.info(f"Reminder job complete: {results}")

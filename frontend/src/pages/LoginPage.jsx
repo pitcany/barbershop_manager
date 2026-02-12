@@ -109,9 +109,11 @@ export default function LoginPage() {
               {loading ? "Signing in..." : "Sign In"}
             </Button>
           </form>
-          <p className="text-xs text-muted-foreground text-center mt-6">
-            Default credentials: admin / admin123
-          </p>
+          {process.env.NODE_ENV === "development" && (
+            <p className="text-xs text-muted-foreground text-center mt-6">
+              Default credentials: admin / admin123
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
