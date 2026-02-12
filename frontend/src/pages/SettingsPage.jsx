@@ -49,6 +49,18 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchShop();
+    fetchCalendarStatus();
+    // Check for calendar connection callback
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("calendar_connected") === "true") {
+      toast.success("Google Calendar connected successfully!");
+      window.history.replaceState({}, "", "/settings");
+      fetchCalendarStatus();
+    }
+    if (params.get("calendar_error")) {
+      toast.error("Failed to connect Google Calendar");
+      window.history.replaceState({}, "", "/settings");
+    }
   }, []);
 
   const fetchShop = async () => {
