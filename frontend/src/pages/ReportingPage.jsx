@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { useAuth } from "../App";
+import axios from "axios";
+import { API } from "../App";
 import Layout from "../components/layout/Layout";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { TrendingUp, DollarSign, AlertTriangle, Users, ArrowUpRight, Calendar, MessageSquare, Activity } from "lucide-react";
