@@ -52,24 +52,44 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 - [x] Outreach history tracking + cooldown enforcement
 - [x] Scheduled daily sweep at 14:00 UTC
 
-## Mocked Integrations
-- Twilio SMS (TWILIO_ENABLED=false) — awaiting credentials
-- Stripe Payments (STRIPE_ENABLED=false)
-- Google Calendar (CALENDAR_ENABLED=false)
-- SendGrid: **Active** (new API key working)
+### Phase 6: Stripe & Google Calendar Integrations (Feb 12)
+- [x] **Stripe Payments (REAL)**: Checkout sessions via emergentintegrations, payment_transactions collection, status polling, webhook handler
+- [x] **Google Calendar (REAL OAuth2)**: OAuth flow (login/callback), token storage/refresh, event CRUD (create on booking, delete on cancel), freebusy availability
+- [x] Frontend: Pay Deposit button, Payment Success/Cancel pages, Integrations status in Settings
+- [x] Calendar sync: new appointments auto-create Google Calendar events, cancellations auto-delete events
+
+## Integration Status
+| Service | Status | Details |
+|---------|--------|---------|
+| SendGrid Email | **Active** | User-provided API key |
+| Stripe Payments | **Active** | Using sk_test_emergent via emergentintegrations |
+| Google Calendar | **Active** | OAuth2 with user-provided client credentials |
+| Twilio SMS | Mocked | TWILIO_ENABLED=false, awaiting credentials |
 
 ## Prioritized Backlog
 
 ### P1 (Next)
 - [ ] Enable Twilio for real SMS (pending credentials)
-- [ ] Real Stripe integration for deposits/no-show fees
-- [ ] Real Google Calendar integration
+- [ ] Migrate APScheduler to Celery+Redis for production
 
 ### P2 (Future)
 - [ ] Client self-service portal (confirm/reschedule via link)
 - [ ] Migrate MongoDB to PostgreSQL
 - [ ] Refactor server.py into modular route files
 - [ ] Multi-shop support
+
+## Key API Endpoints (New)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/payments/create-deposit/{id} | POST | Create Stripe checkout for appointment deposit |
+| /api/payments/status/{session_id} | GET | Poll Stripe payment status |
+| /api/payments/transactions | GET | List all payment transactions |
+| /api/webhooks/stripe | POST | Stripe webhook handler |
+| /api/oauth/calendar/login | GET | Initiate Google Calendar OAuth |
+| /api/oauth/calendar/callback | GET | Handle OAuth callback |
+| /api/calendar/status | GET | Check calendar connection |
+| /api/calendar/disconnect | POST | Disconnect calendar |
+| /api/calendar/events | GET | List calendar events |
 
 ## Credentials
 - **Admin**: username=admin, password=admin123
