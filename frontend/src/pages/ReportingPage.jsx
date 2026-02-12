@@ -23,7 +23,6 @@ function StatCard({ icon: Icon, label, value, sub, color = "#D4AF37" }) {
 }
 
 export default function ReportingPage() {
-  const { token } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
@@ -35,10 +34,8 @@ export default function ReportingPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/reporting/overview?days=${days}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setData(await res.json());
+      const res = await axios.get(`${API}/reporting/overview?days=${days}`);
+      setData(res.data);
     } catch (e) {
       console.error("Failed to load reporting data", e);
     }
