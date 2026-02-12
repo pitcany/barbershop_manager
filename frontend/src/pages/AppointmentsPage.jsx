@@ -85,17 +85,22 @@ export default function AppointmentsPage() {
   // Allowed transitions map fetched from backend
   const [allowedTransitions, setAllowedTransitions] = useState({});
 
+  // Shop timezone (e.g. "America/New_York") — fetched once on mount
+  const [shopTimezone, setShopTimezone] = useState(null);
+
   // Create appointment dialog state
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [barbers, setBarbers] = useState([]);
   const [services, setServices] = useState([]);
   const [clients, setClients] = useState([]);
+  // scheduled_at_local holds the datetime-local input value (no timezone)
   const [newApt, setNewApt] = useState({
     client_id: "",
     barber_id: "",
     service_id: "",
     scheduled_at: "",
+    scheduled_at_local: "",
     notes: "",
   });
 
@@ -105,6 +110,7 @@ export default function AppointmentsPage() {
 
   useEffect(() => {
     fetchAllowedTransitions();
+    fetchShopTimezone();
   }, []);
 
   const fetchAllowedTransitions = async () => {
@@ -114,6 +120,47 @@ export default function AppointmentsPage() {
     } catch {
       // Fallback: show no action options (safe default)
     }
+  };
+
+  const fetchShopTimezone = async () => {
+    try {
+      const response = await axios.get(`${API}/shop`);
+      setShopTimezone(response.data.timezone || "UTC");
+    } catch {
+      setShopTimezone("UTC");
+    }
+  };
+
+  /**
+   * Convert a datetime-local string (e.g. "2026-02-12T14:30") to a UTC ISO
+   * string, interpreting the wall-clock time in the shop's IANA timezone
+   * rather than the browser's local timezone.
+   */
+  const localInputToISO = (localValue) => {
+    if (!localValue || !shopTimezone) return "";
+    // Parse components directly — avoids any browser-timezone interpretation
+    const [datePart, timePart] = localValue.split("T");
+    const [year, month, day] = datePart.split("-").map(Number);
+    const [hour, minute] = (timePart || "00:00").split(":").map(Number);
+
+    // Create a Date treating these values as UTC (just a reference point)
+    const naiveUTC = new Date(Date.UTC(year, month - 1, day, hour, minute));
+
+    // Determine what wall-clock time the shop tz shows at this UTC instant
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: shopTimezone,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false,
+    }).formatToParts(naiveUTC);
+    const g = (type) => parseInt(parts.find((p) => p.type === type)?.value || "0");
+    const shopAtNaiveUTC = Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute"), g("second"));
+
+    // offset = (shop display) − (UTC epoch)  → positive when shop is east of UTC
+    const offsetMs = shopAtNaiveUTC - naiveUTC.getTime();
+
+    // User entered shop-local time → UTC = naive − offset
+    return new Date(naiveUTC.getTime() - offsetMs).toISOString();
   };
 
   const fetchAppointments = async () => {
@@ -153,7 +200,7 @@ export default function AppointmentsPage() {
 
   const openCreateDialog = () => {
     fetchFormData();
-    setNewApt({ client_id: "", barber_id: "", service_id: "", scheduled_at: "", notes: "" });
+    setNewApt({ client_id: "", barber_id: "", service_id: "", scheduled_at: "", scheduled_at_local: "", notes: "" });
     setCreateOpen(true);
   };
 
@@ -164,7 +211,8 @@ export default function AppointmentsPage() {
     }
     setCreating(true);
     try {
-      await axios.post(`${API}/appointments`, newApt);
+      const { scheduled_at_local, ...payload } = newApt;
+      await axios.post(`${API}/appointments`, payload);
       toast.success("Appointment created");
       setCreateOpen(false);
       fetchAppointments();
@@ -310,11 +358,18 @@ export default function AppointmentsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Date & Time *</Label>
+                <Label>Date & Time *{shopTimezone ? ` (${shopTimezone.replace(/_/g, " ")})` : ""}</Label>
                 <Input
                   type="datetime-local"
-                  value={newApt.scheduled_at}
-                  onChange={(e) => setNewApt({ ...newApt, scheduled_at: e.target.value ? new Date(e.target.value).toISOString() : "" })}
+                  value={newApt.scheduled_at_local}
+                  onChange={(e) => {
+                    const local = e.target.value;
+                    setNewApt({
+                      ...newApt,
+                      scheduled_at_local: local,
+                      scheduled_at: local ? localInputToISO(local) : "",
+                    });
+                  }}
                   data-testid="apt-datetime-input"
                 />
               </div>
