@@ -14,7 +14,6 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import re
-import time
 import uuid
 import jwt
 from passlib.context import CryptContext
@@ -95,40 +94,29 @@ def clamp_pagination(limit: int, skip: int, max_limit: int = MAX_LIMIT) -> tuple
 
 # ==================== RATE LIMITING ====================
 
-_rate_limit_store: Dict[str, List[float]] = {}
-_rate_limit_windows: Dict[str, int] = {}
+async def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
+    """Returns True if request is allowed, False if rate limited.
 
-def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
-    """Returns True if request is allowed, False if rate limited."""
-    now = time.time()
-    if key not in _rate_limit_store:
-        _rate_limit_store[key] = []
-        _rate_limit_windows[key] = window_seconds
-    elif key not in _rate_limit_windows:
-        _rate_limit_windows[key] = window_seconds
-    # Remove expired entries
-    _rate_limit_store[key] = [t for t in _rate_limit_store[key] if now - t < window_seconds]
-    if not _rate_limit_store[key]:
-        del _rate_limit_store[key]
-        _rate_limit_windows.pop(key, None)
-    if key not in _rate_limit_store:
-        _rate_limit_store[key] = [now]
-        _rate_limit_windows[key] = window_seconds
-        return True
-    if len(_rate_limit_store[key]) >= max_requests:
+    Uses MongoDB so rate limits are shared across multiple workers.
+    Expired entries are cleaned up automatically via a TTL index on
+    the ``rate_limit_entries`` collection (created at startup).
+    """
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(seconds=window_seconds)
+
+    count = await db.rate_limit_entries.count_documents({
+        "key": key,
+        "timestamp": {"$gte": window_start},
+    })
+
+    if count >= max_requests:
         return False
-    _rate_limit_store[key].append(now)
 
-    # Periodic cleanup: prune stale keys when store grows large
-    if len(_rate_limit_store) > 10000:
-        stale_keys = [
-            k for k, timestamps in _rate_limit_store.items()
-            if all(now - t > _rate_limit_windows.get(k, window_seconds) for t in timestamps)
-        ]
-        for k in stale_keys:
-            del _rate_limit_store[k]
-            _rate_limit_windows.pop(k, None)
-
+    await db.rate_limit_entries.insert_one({
+        "key": key,
+        "timestamp": now,
+        "expires_at": now + timedelta(seconds=window_seconds),
+    })
     return True
 
 
@@ -178,7 +166,7 @@ async def get_shop(user: dict = Depends(get_current_user)) -> Shop:
 async def login(request: LoginRequest, raw_request: Request):
     """Admin login"""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
+    if not await check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
 
     admin = await db.admin_users.find_one({"username": request.username}, {"_id": 0})
@@ -1152,7 +1140,7 @@ async def stripe_webhook(request: Request):
 async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
     """Public endpoint for SMS consent form (compliance-compliant)"""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
+    if not await check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     # Find shop (using first shop for MVP)
@@ -1212,8 +1200,8 @@ async def get_public_shop_info():
 # ==================== MOCK PAYMENT ENDPOINT ====================
 
 @api_router.get("/mock-payment")
-async def mock_payment_page(session_id: str):
-    """Mock payment endpoint for local testing"""
+async def mock_payment_page(session_id: str, shop: Shop = Depends(get_shop)):
+    """Mock payment endpoint for local testing (auth required)"""
     from providers.mock_providers import MockPaymentProvider
     
     payment = get_payment()
@@ -1435,7 +1423,10 @@ app.add_middleware(
 async def startup_event():
     """Initialize database with seed data if empty"""
     logger.info("Starting Barbershop Autopilot...")
-    
+
+    # Ensure TTL index for rate-limit entries (auto-cleanup)
+    await db.rate_limit_entries.create_index("expires_at", expireAfterSeconds=0)
+
     # Check if shop exists
     shop_count = await db.shops.count_documents({})
     
@@ -1623,7 +1614,7 @@ async def seed_demo_data():
     await db.admin_users.insert_one(admin)
     
     logger.info("Demo data seeded successfully!")
-    logger.info(f"Admin login: username='admin', password='{admin_password}'")
+    logger.info("Admin login: username='admin' (password set via ADMIN_PASSWORD env var)")
 
 
 @app.on_event("shutdown")

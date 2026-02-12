@@ -385,38 +385,32 @@ class NoShowEnforcementAgent:
         return payment_link.url
     
     async def process_no_show(self, appointment_id: str):
-        """Mark appointment as no-show and update client stats"""
+        """Handle no-show side-effects (client stats, revenue event).
+
+        NOTE: The caller (update_appointment_status endpoint) already sets the
+        appointment status to 'no_show'.  This method must NOT re-write the
+        status to avoid a race condition with concurrent requests.
+        """
         appointment = await self.db.appointments.find_one(
-            {"id": appointment_id},
+            {"id": appointment_id, "shop_id": self.shop.id},
             {"_id": 0}
         )
-        
+
         if not appointment:
             return
-        
-        # Update appointment
-        await self.db.appointments.update_one(
-            {"id": appointment_id},
-            {
-                "$set": {
-                    "status": AppointmentStatus.NO_SHOW.value,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }
-            }
-        )
-        
+
         # Update client no-show count
         await self.db.clients.update_one(
-            {"id": appointment["client_id"]},
+            {"id": appointment["client_id"], "shop_id": self.shop.id},
             {
                 "$inc": {"no_shows": 1},
                 "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
             }
         )
-        
+
         # Log event with revenue impact
         service = await self.db.services.find_one(
-            {"id": appointment["service_id"]},
+            {"id": appointment["service_id"], "shop_id": self.shop.id},
             {"_id": 0}
         )
         revenue_lost = service["price"] if service else 0
@@ -543,7 +537,7 @@ class WaitlistFillAgent:
     async def process_cancellation(self, appointment_id: str):
         """Process a cancellation and attempt to fill from waitlist"""
         appointment = await self.db.appointments.find_one(
-            {"id": appointment_id},
+            {"id": appointment_id, "shop_id": self.shop.id},
             {"_id": 0}
         )
         
