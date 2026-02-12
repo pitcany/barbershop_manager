@@ -52,6 +52,7 @@ from revenue_logger import (
 from scheduling import create_scheduling_engine, SchedulingEngine
 from scheduler import start_scheduler, stop_scheduler, get_job_status
 from owner_ops_agent import OwnerOpsAgent
+from retention_rebook_agent import RetentionRebookAgent
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
