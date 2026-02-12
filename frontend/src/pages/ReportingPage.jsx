@@ -1,5 +1,5 @@
-import { useState, useEffect, useContext } from "react";
-import { AuthContext } from "../App";
+import { useState, useEffect } from "react";
+import { useAuth } from "../App";
 import Layout from "../components/layout/Layout";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { TrendingUp, DollarSign, AlertTriangle, Users, ArrowUpRight, Calendar, MessageSquare, Activity } from "lucide-react";
@@ -22,7 +22,7 @@ function StatCard({ icon: Icon, label, value, sub, color = "#D4AF37" }) {
 }
 
 export default function ReportingPage() {
-  const { token } = useContext(AuthContext);
+  const { token } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);

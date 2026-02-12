@@ -1,5 +1,5 @@
-import { useState, useEffect, useContext } from "react";
-import { AuthContext } from "../App";
+import { useState, useEffect } from "react";
+import { useAuth } from "../App";
 import Layout from "../components/layout/Layout";
 import { Play, Clock, CheckCircle, XCircle, RefreshCw, Mail, Bell, Activity } from "lucide-react";
 
@@ -70,7 +70,7 @@ function ResultModal({ title, data, onClose }) {
 }
 
 export default function JobsPage() {
-  const { token } = useContext(AuthContext);
+  const { token } = useAuth();
   const [jobs, setJobs] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
