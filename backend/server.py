@@ -1665,6 +1665,34 @@ async def preview_reminders(shop: Shop = Depends(get_shop)):
     }
 
 
+@api_router.post("/jobs/daily-summary/run")
+async def run_daily_summary(shop: Shop = Depends(get_shop)):
+    """
+    Manually trigger the daily summary email.
+    Useful for testing. Sends to the shop owner's configured email.
+    """
+    agent = OwnerOpsAgent(db, shop.model_dump())
+    result = await agent.send_daily_summary()
+    return result
+
+
+@api_router.get("/jobs/daily-summary/preview")
+async def preview_daily_summary(shop: Shop = Depends(get_shop)):
+    """
+    Preview the daily summary stats without sending the email.
+    """
+    agent = OwnerOpsAgent(db, shop.model_dump())
+    stats = await agent.compile_daily_stats()
+    return {"stats": stats, "shop_email": shop.email}
+
+
+@api_router.get("/jobs/status")
+async def scheduler_status(user: dict = Depends(get_current_user)):
+    """Get status of all scheduled background jobs."""
+    jobs = get_job_status()
+    return {"scheduler": "running", "jobs": jobs}
+
+
 # ==================== EMAIL OUTBOX ENDPOINT ====================
 
 @api_router.get("/email-outbox")
