@@ -7,7 +7,13 @@ import asyncio
 from html import escape
 
 from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit, batch_fetch_map
-from models import Shop, LoginRequest, TokenResponse, PolicyUpdate
+from models import (
+    Shop, LoginRequest, TokenResponse, PolicyUpdate,
+    CreateBarberRequest, UpdateBarberRequest,
+    CreateServiceRequest, UpdateServiceRequest,
+    UpdateShopDetailsRequest,
+)
+import uuid
 
 router = APIRouter()
 
@@ -58,7 +64,6 @@ async def update_shop_policy(update: PolicyUpdate, shop: Shop = Depends(get_shop
 async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    week_start = (now - timedelta(days=7)).isoformat()
     month_start = (now - timedelta(days=30)).isoformat()
 
     # Parallelize all counting and aggregation queries
@@ -143,10 +148,127 @@ async def list_barbers(shop: Shop = Depends(get_shop)):
     return {"barbers": barbers}
 
 
+@router.post("/barbers")
+async def create_barber(body: CreateBarberRequest, shop: Shop = Depends(get_shop)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    barber = {
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "name": body.name,
+        "email": body.email or "",
+        "phone": body.phone or "",
+        "active": True,
+        "created_at": now_iso,
+    }
+    await db.barbers.insert_one(barber)
+    barber.pop("_id", None)
+    return barber
+
+
+@router.patch("/barbers/{barber_id}")
+async def update_barber(barber_id: str, body: UpdateBarberRequest, shop: Shop = Depends(get_shop)):
+    barber = await db.barbers.find_one({"id": barber_id, "shop_id": shop.id}, {"_id": 0})
+    if not barber:
+        raise HTTPException(status_code=404, detail="Barber not found")
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if update_data:
+        await db.barbers.update_one({"id": barber_id}, {"$set": update_data})
+    updated = await db.barbers.find_one({"id": barber_id}, {"_id": 0})
+    return updated
+
+
+@router.delete("/barbers/{barber_id}")
+async def delete_barber(barber_id: str, shop: Shop = Depends(get_shop)):
+    result = await db.barbers.update_one(
+        {"id": barber_id, "shop_id": shop.id},
+        {"$set": {"active": False}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Barber not found")
+    return {"message": "Barber deactivated"}
+
+
 @router.get("/services")
 async def list_services(shop: Shop = Depends(get_shop)):
     services = await db.services.find({"shop_id": shop.id, "active": True}, {"_id": 0}).to_list(50)
     return {"services": services}
+
+
+@router.post("/services")
+async def create_service(body: CreateServiceRequest, shop: Shop = Depends(get_shop)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    service = {
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "name": body.name,
+        "description": body.description or "",
+        "duration_minutes": body.duration_minutes,
+        "price": body.price,
+        "active": True,
+        "created_at": now_iso,
+    }
+    await db.services.insert_one(service)
+    service.pop("_id", None)
+    return service
+
+
+@router.patch("/services/{service_id}")
+async def update_service(service_id: str, body: UpdateServiceRequest, shop: Shop = Depends(get_shop)):
+    service = await db.services.find_one({"id": service_id, "shop_id": shop.id}, {"_id": 0})
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if update_data:
+        await db.services.update_one({"id": service_id}, {"$set": update_data})
+    updated = await db.services.find_one({"id": service_id}, {"_id": 0})
+    return updated
+
+
+@router.delete("/services/{service_id}")
+async def delete_service(service_id: str, shop: Shop = Depends(get_shop)):
+    result = await db.services.update_one(
+        {"id": service_id, "shop_id": shop.id},
+        {"$set": {"active": False}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return {"message": "Service deactivated"}
+
+
+# ==================== SHOP DETAILS ====================
+
+@router.patch("/shop/details")
+async def update_shop_details(body: UpdateShopDetailsRequest, shop: Shop = Depends(get_shop)):
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if update_data:
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.shops.update_one({"id": shop.id}, {"$set": update_data})
+    updated = await db.shops.find_one({"id": shop.id}, {"_id": 0})
+    return updated
+
+
+# ==================== TODAY'S SCHEDULE ====================
+
+@router.get("/dashboard/today-schedule")
+async def get_today_schedule(shop: Shop = Depends(get_shop)):
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+
+    appointments = await db.appointments.find(
+        {"shop_id": shop.id, "scheduled_at": {"$gte": today_start, "$lte": today_end}, "status": {"$nin": ["cancelled"]}},
+        {"_id": 0}
+    ).sort("scheduled_at", 1).to_list(100)
+
+    for apt in appointments:
+        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1, "phone": 1})
+        apt["client"] = client or {"name": "Unknown", "phone": ""}
+        barber = await db.barbers.find_one({"id": apt.get("barber_id")}, {"_id": 0, "name": 1})
+        apt["barber"] = barber or {"name": "Unknown"}
+        service = await db.services.find_one({"id": apt.get("service_id")}, {"_id": 0, "name": 1, "price": 1, "duration_minutes": 1})
+        apt["service"] = service or {"name": "Unknown", "price": 0}
+
+    return {"appointments": appointments, "total": len(appointments)}
 
 
 # ==================== SMS / EMAIL TEST ====================

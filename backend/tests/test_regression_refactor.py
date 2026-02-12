@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    BASE_URL = "https://booking-recovery.preview.emergentagent.com"
+    BASE_URL = "https://salon-flow-manager.preview.emergentagent.com"
 
 
 class TestHealthAndPublic:

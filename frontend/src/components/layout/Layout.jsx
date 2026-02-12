@@ -13,17 +13,19 @@ import {
   Scissors,
   Menu,
   X,
-  User
+  User,
+  Wrench,
+  BarChart
 } from "lucide-react";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/appointments", label: "Appointments", icon: Calendar },
   { path: "/clients", label: "Clients", icon: User },
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
-  { path: "/appointments", label: "Appointments", icon: Calendar },
-  { path: "/clients", label: "Clients", icon: UserRound },
   { path: "/waitlist", label: "Waitlist", icon: Users },
-  { path: "/reporting", label: "Reporting", icon: LayoutDashboard },
+  { path: "/manage", label: "Manage Shop", icon: Wrench },
+  { path: "/reporting", label: "Reporting", icon: BarChart },
   { path: "/jobs", label: "Jobs", icon: Settings },
   { path: "/settings", label: "Settings", icon: Scissors },
 ];

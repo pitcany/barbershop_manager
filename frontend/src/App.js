@@ -16,6 +16,7 @@ const ClientsPage = lazy(() => import("./pages/ClientsPage"));
 const ClientDetailPage = lazy(() => import("./pages/ClientDetailPage"));
 const ReportingPage = lazy(() => import("./pages/ReportingPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
+const ManagePage = lazy(() => import("./pages/ManagePage"));
 const PaymentSuccessPage = lazy(() => import("./pages/PaymentSuccessPage"));
 const PaymentCancelPage = lazy(() => import("./pages/PaymentCancelPage"));
 const BookingPage = lazy(() => import("./pages/BookingPage"));
@@ -193,6 +194,11 @@ function App() {
               <Route path="/jobs" element={
                 <ProtectedRoute>
                   <JobsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/manage" element={
+                <ProtectedRoute>
+                  <ManagePage />
                 </ProtectedRoute>
               } />
               <Route path="/settings" element={

@@ -179,7 +179,7 @@ class TestPublicBooking:
                 "notes": "Automated test booking",
                 "sms_consent": False
             },
-            headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+            headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
         )
         # Could be 200 or 409 if slot taken
         assert response.status_code in [200, 409], f"Expected 200 or 409, got {response.status_code}"
@@ -213,7 +213,7 @@ class TestPublicBooking:
                 "notes": "Testing deposit requirement",
                 "sms_consent": True
             },
-            headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+            headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
         )
         
         if response.status_code == 200:
@@ -244,7 +244,7 @@ class TestPublicBooking:
                 "notes": "First booking",
                 "sms_consent": False
             },
-            headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+            headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
         )
         
         if first_booking.status_code == 200:
@@ -262,7 +262,7 @@ class TestPublicBooking:
                     "notes": "Conflict booking",
                     "sms_consent": False
                 },
-                headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+                headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
             )
             assert second_booking.status_code == 409, "Double booking should return 409"
             assert "conflict" in second_booking.json().get("detail", "").lower() or "unavailable" in second_booking.json().get("detail", "").lower()
@@ -275,7 +275,7 @@ class TestPublicBooking:
                 "name": "Test",
                 # Missing phone, barber_id, service_id, scheduled_at
             },
-            headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+            headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
         )
         assert response.status_code == 400
         
@@ -294,7 +294,7 @@ class TestPublicBooking:
                 "scheduled_at": slot_time.isoformat(),
                 "sms_consent": False
             },
-            headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+            headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
         )
         assert response.status_code == 404
         
@@ -319,7 +319,7 @@ class TestPublicBooking:
                 "notes": "First booking",
                 "sms_consent": False
             },
-            headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+            headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
         )
         
         if first_response.status_code == 200:
@@ -337,7 +337,7 @@ class TestPublicBooking:
                     "notes": "Second booking",
                     "sms_consent": True
                 },
-                headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+                headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
             )
             # Should succeed (client updated)
             assert second_response.status_code in [200, 409]
@@ -365,7 +365,7 @@ class TestPublicAppointment:
                 "scheduled_at": slot_time.isoformat(),
                 "sms_consent": False
             },
-            headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+            headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
         )
         
         if booking_res.status_code == 200:
@@ -412,7 +412,7 @@ class TestRateLimiting:
                     "scheduled_at": slot_time.isoformat(),
                     "sms_consent": False
                 },
-                headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+                headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
             )
             responses.append(res.status_code)
         
@@ -448,7 +448,7 @@ class TestNoAuthRequired:
         res = requests.post(
             f"{BASE_URL}/api/public/book",
             json={"name": "test"},  # Incomplete but tests no 401
-            headers={"x-origin": "https://booking-recovery.preview.emergentagent.com"}
+            headers={"x-origin": "https://salon-flow-manager.preview.emergentagent.com"}
         )
         # Should get 400 (missing fields) not 401 (unauthorized)
         assert res.status_code != 401
