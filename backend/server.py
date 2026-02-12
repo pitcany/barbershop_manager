@@ -603,7 +603,6 @@ async def validate_slot(
         "scheduled_at": scheduled_dt.isoformat(),
         "duration_minutes": duration_minutes
     }
-    }
 
 
 @api_router.post("/appointments")
