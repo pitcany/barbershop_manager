@@ -504,7 +504,7 @@ async def create_appointment(
     body: CreateAppointmentRequest,
     shop: Shop = Depends(get_shop)
 ):
-    """Create a new appointment."""
+    """Create a new appointment with conflict prevention."""
     # Validate client exists
     client = await db.clients.find_one(
         {"id": body.client_id, "shop_id": shop.id}, {"_id": 0, "id": 1, "no_shows": 1}
@@ -531,12 +531,22 @@ async def create_appointment(
         scheduled_dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
         if scheduled_dt.tzinfo is None:
             scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
-        if scheduled_dt < datetime.now(timezone.utc):
-            raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid scheduled_at format — use ISO 8601")
 
     duration = body.duration_minutes or service.get("duration_minutes", 30)
+    
+    # === CONFLICT PREVENTION ===
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+    is_valid, error_msg = await scheduler.validate_appointment_slot(
+        barber_id=body.barber_id,
+        scheduled_at=scheduled_dt,
+        duration_minutes=duration
+    )
+    
+    if not is_valid:
+        raise HTTPException(status_code=409, detail=error_msg)
+    
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Check deposit requirement
