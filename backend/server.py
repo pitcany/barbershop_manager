@@ -720,6 +720,29 @@ async def create_appointment(
     await db.appointments.insert_one(appointment)
     appointment.pop("_id", None)
 
+    # Sync to Google Calendar
+    try:
+        calendar = get_calendar(db)
+        from providers.interfaces import CalendarEvent
+        barber_name = barber.get("name", "Unknown") if barber else "Unknown"
+        client_name = client.get("name", "Unknown") if client else "Unknown"
+        end_dt = scheduled_dt + timedelta(minutes=duration)
+        cal_event = CalendarEvent(
+            summary=f"{service.get('name', 'Appointment')} - {client_name}",
+            description=f"Barber: {barber_name}\nClient: {client_name}\nService: {service.get('name', '')}\nNotes: {body.notes or ''}",
+            start_time=scheduled_dt,
+            end_time=end_dt,
+        )
+        gcal_event_id = await calendar.create_event("primary", cal_event)
+        if gcal_event_id:
+            await db.appointments.update_one(
+                {"id": appointment_id},
+                {"$set": {"gcal_event_id": gcal_event_id}}
+            )
+            appointment["gcal_event_id"] = gcal_event_id
+    except Exception as e:
+        logger.error(f"Calendar sync failed: {e}")
+
     return appointment
 
 
