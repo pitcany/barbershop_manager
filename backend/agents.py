@@ -86,7 +86,7 @@ class FrontDeskAgent:
         self.db = db
         self.shop = shop
         self.sms = get_sms()
-        self.calendar = get_calendar()
+        self.calendar = get_calendar(db)
         self.payment = get_payment()
     
     async def process_inbound_message(
