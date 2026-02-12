@@ -10,8 +10,6 @@ import os
 import logging
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-import jwt
-from passlib.context import CryptContext
 
 # Load environment
 ROOT_DIR = Path(__file__).parent
@@ -20,32 +18,11 @@ load_dotenv(ROOT_DIR / '.env')
 # Import shared dependencies from deps module
 from deps import db, pwd_context
 
-# Import models (for seed data and type hints)
-from models import (
-    Shop, Barber, Service, Client, Appointment, Message, Waitlist, Payment, Event,
-    AppointmentStatus, MessageDirection, EventType, PaymentStatus as PaymentStatusEnum,
-    AdminUser, EmailOutbox, AuditProvider, AuditAction,
-    RevenueSource, ALLOWED_TRANSITIONS
-)
+# Import models (used by seed_demo_data)
+from models import AppointmentStatus, MessageDirection, EventType
 
-# Import providers (for seed data)
-from providers import get_sms, get_email, get_payment, get_calendar
-
-# Import compliance and audit services (for seed data)
-from audit import create_audit_logger
-from sms_compliance import (
-    SMSComplianceService, create_sms_service,
-    is_opt_out_message, is_twilio_enabled
-)
-from revenue_logger import (
-    create_revenue_logger,
-    log_no_show_fee_on_payment_success,
-    log_waitlist_fill_on_booking_success
-)
-from scheduling import create_scheduling_engine, SchedulingEngine
-from scheduler import start_scheduler, stop_scheduler, get_job_status
-from owner_ops_agent import OwnerOpsAgent
-from retention_rebook_agent import RetentionRebookAgent
+# Import scheduler (used by startup/shutdown)
+from scheduler import start_scheduler, stop_scheduler
 
 # Import route modules
 from routes import all_routers
@@ -66,9 +43,6 @@ app = FastAPI(
 
 # Create API router and include all sub-routers
 api_router = APIRouter(prefix="/api")
-
-# Import auth utilities from deps.py
-from deps import create_access_token, verify_token, get_current_user, get_shop
 
 
 # All route handlers live in routes/*.py modules
