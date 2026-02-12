@@ -499,6 +499,142 @@ async def update_appointment_status(
     return {"message": "Status updated"}
 
 
+# ==================== SCHEDULING / AVAILABILITY ENDPOINTS ====================
+
+@api_router.get("/scheduling/availability")
+async def get_availability(
+    shop: Shop = Depends(get_shop),
+    date: str = None,
+    barber_id: Optional[str] = None,
+    service_id: Optional[str] = None
+):
+    """
+    Get available time slots for a given date.
+    
+    Query params:
+    - date: ISO date string (YYYY-MM-DD), defaults to today
+    - barber_id: Optional specific barber
+    - service_id: Optional service (used to determine duration)
+    """
+    # Parse date
+    if date:
+        try:
+            target_date = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    else:
+        target_date = datetime.now(timezone.utc)
+    
+    # Get service duration
+    duration = 30  # Default
+    if service_id:
+        service = await db.services.find_one(
+            {"id": service_id, "shop_id": shop.id},
+            {"_id": 0, "duration_minutes": 1}
+        )
+        if service:
+            duration = service.get("duration_minutes", 30)
+    
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+    slots = await scheduler.get_available_slots(target_date, barber_id, duration)
+    
+    return {
+        "date": target_date.date().isoformat(),
+        "duration_minutes": duration,
+        "slots": [slot.to_dict() for slot in slots]
+    }
+
+
+@api_router.get("/scheduling/barber/{barber_id}/schedule")
+async def get_barber_schedule(
+    barber_id: str,
+    shop: Shop = Depends(get_shop),
+    start_date: str = None,
+    end_date: str = None
+):
+    """
+    Get a barber's schedule for a date range.
+    
+    Defaults to the current day if no dates provided.
+    """
+    # Parse dates
+    now = datetime.now(timezone.utc)
+    
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+    else:
+        start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+    else:
+        end_dt = start_dt + timedelta(days=1)
+    
+    # Validate barber exists
+    barber = await db.barbers.find_one(
+        {"id": barber_id, "shop_id": shop.id},
+        {"_id": 0, "id": 1, "name": 1}
+    )
+    if not barber:
+        raise HTTPException(status_code=404, detail="Barber not found")
+    
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+    appointments = await scheduler.get_barber_schedule(barber_id, start_dt, end_dt)
+    
+    return {
+        "barber": barber,
+        "start_date": start_dt.isoformat(),
+        "end_date": end_dt.isoformat(),
+        "appointments": appointments
+    }
+
+
+@api_router.post("/scheduling/validate-slot")
+async def validate_slot(
+    shop: Shop = Depends(get_shop),
+    barber_id: str = None,
+    scheduled_at: str = None,
+    duration_minutes: int = 30,
+    exclude_appointment_id: Optional[str] = None
+):
+    """
+    Validate if a specific time slot is available.
+    
+    Returns whether the slot can be booked and any conflict details.
+    """
+    if not barber_id or not scheduled_at:
+        raise HTTPException(status_code=400, detail="barber_id and scheduled_at are required")
+    
+    try:
+        scheduled_dt = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+        if scheduled_dt.tzinfo is None:
+            scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid scheduled_at format")
+    
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+    is_valid, error_msg = await scheduler.validate_appointment_slot(
+        barber_id=barber_id,
+        scheduled_at=scheduled_dt,
+        duration_minutes=duration_minutes,
+        exclude_appointment_id=exclude_appointment_id
+    )
+    
+    return {
+        "valid": is_valid,
+        "error": error_msg,
+        "barber_id": barber_id,
+        "scheduled_at": scheduled_dt.isoformat(),
+        "duration_minutes": duration_minutes
+    }
+
+
 @api_router.post("/appointments")
 async def create_appointment(
     body: CreateAppointmentRequest,
