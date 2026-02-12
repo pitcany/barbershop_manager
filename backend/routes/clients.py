@@ -5,6 +5,7 @@ from typing import Optional
 import uuid
 import re
 import logging
+import asyncio
 
 from deps import db, get_shop, get_current_user
 from models import Shop, CreateClientRequest, UpdateClientRequest, CreateWaitlistRequest
@@ -30,8 +31,21 @@ async def list_clients(
             {"name": {"$regex": escaped, "$options": "i"}},
             {"phone": {"$regex": escaped}},
         ]
-    clients = await db.clients.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
-    total = await db.clients.count_documents(query)
+
+    # Use $facet to combine find and count into a single query
+    pipeline = [
+        {"$match": query},
+        {"$sort": {"created_at": -1}},
+        {"$facet": {
+            "data": [{"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0}}],
+            "total": [{"$count": "count"}],
+        }},
+    ]
+    result = await db.clients.aggregate(pipeline).to_list(1)
+    facet = result[0] if result else {"data": [], "total": []}
+    clients = facet.get("data", [])
+    total = facet["total"][0]["count"] if facet.get("total") else 0
+
     return {"clients": clients, "total": total}
 
 
@@ -108,10 +122,20 @@ async def get_client_history(client_id: str, shop: Shop = Depends(get_shop)):
         {"client_id": client_id, "shop_id": shop.id}, {"_id": 0}
     ).sort("scheduled_at", -1).limit(50).to_list(50)
 
+    # Batch fetch barbers and services to avoid N+1
+    barber_ids = list({apt.get("barber_id") for apt in appointments if apt.get("barber_id")})
+    service_ids = list({apt.get("service_id") for apt in appointments if apt.get("service_id")})
+
+    barbers_list = await db.barbers.find({"id": {"$in": barber_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(barber_ids)) if barber_ids else []
+    services_list = await db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1, "price": 1}).to_list(len(service_ids)) if service_ids else []
+
+    barbers_map = {b["id"]: b for b in barbers_list}
+    services_map = {s["id"]: s for s in services_list}
+
     for apt in appointments:
-        barber = await db.barbers.find_one({"id": apt.get("barber_id")}, {"_id": 0, "name": 1})
+        barber = barbers_map.get(apt.get("barber_id"))
         apt["barber_name"] = barber["name"] if barber else "Unknown"
-        service = await db.services.find_one({"id": apt.get("service_id")}, {"_id": 0, "name": 1, "price": 1})
+        service = services_map.get(apt.get("service_id"))
         apt["service_name"] = service["name"] if service else "Unknown"
         apt["service_price"] = service["price"] if service else 0
 
@@ -119,10 +143,13 @@ async def get_client_history(client_id: str, shop: Shop = Depends(get_shop)):
         {"client_id": client_id, "shop_id": shop.id}, {"_id": 0}
     ).sort("created_at", -1).limit(50).to_list(50)
 
-    total = await db.appointments.count_documents({"client_id": client_id, "shop_id": shop.id})
-    completed = await db.appointments.count_documents({"client_id": client_id, "shop_id": shop.id, "status": "completed"})
-    no_shows = await db.appointments.count_documents({"client_id": client_id, "shop_id": shop.id, "status": "no_show"})
-    cancelled = await db.appointments.count_documents({"client_id": client_id, "shop_id": shop.id, "status": "cancelled"})
+    # Parallelize count queries
+    total, completed, no_shows, cancelled = await asyncio.gather(
+        db.appointments.count_documents({"client_id": client_id, "shop_id": shop.id}),
+        db.appointments.count_documents({"client_id": client_id, "shop_id": shop.id, "status": "completed"}),
+        db.appointments.count_documents({"client_id": client_id, "shop_id": shop.id, "status": "no_show"}),
+        db.appointments.count_documents({"client_id": client_id, "shop_id": shop.id, "status": "cancelled"}),
+    )
 
     revenue_pipeline = [
         {"$match": {"client_id": client_id, "shop_id": shop.id, "status": "completed"}},
@@ -204,10 +231,22 @@ async def list_conversations(shop: Shop = Depends(get_shop), limit: int = 50):
     ]
     convos = await db.messages.aggregate(pipeline).to_list(limit)
 
+    # Batch fetch clients to avoid N+1
+    client_ids = [c["_id"] for c in convos]
+    clients_list = await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(len(client_ids)) if client_ids else []
+    clients_map = {c["id"]: c for c in clients_list}
+
+    # Batch count unread messages
+    unread_pipeline = [
+        {"$match": {"shop_id": shop.id, "client_id": {"$in": client_ids}, "direction": "inbound", "read": {"$ne": True}}},
+        {"$group": {"_id": "$client_id", "count": {"$sum": 1}}},
+    ]
+    unread_list = await db.messages.aggregate(unread_pipeline).to_list(len(client_ids)) if client_ids else []
+    unread_map = {u["_id"]: u["count"] for u in unread_list}
+
     result = []
     for c in convos:
-        client = await db.clients.find_one({"id": c["_id"]}, {"_id": 0, "name": 1, "phone": 1})
-        unread = await db.messages.count_documents({"client_id": c["_id"], "shop_id": shop.id, "direction": "inbound", "read": {"$ne": True}})
+        client = clients_map.get(c["_id"])
         result.append({
             "client_id": c["_id"],
             "client_name": client["name"] if client else "Unknown",
@@ -216,7 +255,7 @@ async def list_conversations(shop: Shop = Depends(get_shop), limit: int = 50):
             "last_direction": c["last_direction"],
             "last_at": c["last_at"],
             "total_messages": c["total_messages"],
-            "unread_count": unread,
+            "unread_count": unread_map.get(c["_id"], 0),
         })
     return {"conversations": result}
 
@@ -296,12 +335,20 @@ async def get_live_activity(
 async def list_waitlist(shop: Shop = Depends(get_shop)):
     entries = await db.waitlist.find({"shop_id": shop.id, "active": True}, {"_id": 0}).sort("created_at", -1).to_list(100)
 
+    # Batch fetch clients and services to avoid N+1
+    client_ids = list({entry.get("client_id") for entry in entries if entry.get("client_id")})
+    service_ids = list({entry.get("service_id") for entry in entries if entry.get("service_id")})
+
+    clients_list = await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(len(client_ids)) if client_ids else []
+    services_list = await db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(service_ids)) if service_ids else []
+
+    clients_map = {c["id"]: {"name": c.get("name", "Unknown"), "phone": c.get("phone", "")} for c in clients_list}
+    services_map = {s["id"]: {"name": s.get("name", "Unknown")} for s in services_list}
+
     for entry in entries:
-        client = await db.clients.find_one({"id": entry.get("client_id")}, {"_id": 0, "name": 1, "phone": 1})
-        entry["client"] = client or {"name": "Unknown", "phone": ""}
+        entry["client"] = clients_map.get(entry.get("client_id"), {"name": "Unknown", "phone": ""})
         if entry.get("service_id"):
-            service = await db.services.find_one({"id": entry["service_id"]}, {"_id": 0, "name": 1})
-            entry["service"] = service or {"name": "Unknown"}
+            entry["service"] = services_map.get(entry["service_id"], {"name": "Unknown"})
 
     return {"waitlist": entries, "total": len(entries)}
 
