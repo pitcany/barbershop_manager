@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API } from "../App";
@@ -173,9 +173,12 @@ export default function ConversationsPage() {
     }
   };
 
-  const filteredConversations = conversations.filter(conv => 
-    conv.client?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    conv.client?.phone?.includes(searchTerm)
+  const filteredConversations = useMemo(() =>
+    conversations.filter(conv =>
+      conv.client?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      conv.client?.phone?.includes(searchTerm)
+    ),
+    [conversations, searchTerm]
   );
 
   return (

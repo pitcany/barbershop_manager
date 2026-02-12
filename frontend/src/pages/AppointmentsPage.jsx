@@ -94,12 +94,19 @@ export default function AppointmentsPage() {
   };
 
   const updateStatus = async (appointmentId, newStatus) => {
+    // Optimistic update
+    setAppointments(prev =>
+      prev.map(apt =>
+        apt.id === appointmentId ? { ...apt, status: newStatus } : apt
+      )
+    );
     try {
       await axios.patch(`${API}/appointments/${appointmentId}/status?status=${newStatus}`);
       toast.success("Status updated");
-      fetchAppointments();
     } catch (error) {
-      toast.error("Failed to update status");
+      const detail = error.response?.data?.detail;
+      toast.error(detail || "Failed to update status");
+      fetchAppointments(); // Revert on failure
     }
   };
 
