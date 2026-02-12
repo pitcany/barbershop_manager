@@ -1038,6 +1038,103 @@ async def get_conversation(client_id: str, shop: Shop = Depends(get_shop), limit
     return {"messages": messages, "client": client}
 
 
+@api_router.get("/conversations/poll/new")
+async def poll_new_messages(
+    shop: Shop = Depends(get_shop),
+    since: str = None,
+    client_id: Optional[str] = None
+):
+    """
+    Poll for new messages since a given timestamp.
+    
+    Used for real-time updates without WebSockets.
+    
+    Args:
+        since: ISO timestamp - return messages after this time
+        client_id: Optional - filter to specific conversation
+    
+    Returns new messages and the latest timestamp for next poll.
+    """
+    query = {"shop_id": shop.id}
+    
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            query["created_at"] = {"$gt": since_dt.isoformat()}
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid 'since' timestamp format")
+    
+    if client_id:
+        query["client_id"] = client_id
+    
+    messages = await db.messages.find(
+        query, {"_id": 0}
+    ).sort("created_at", 1).limit(100).to_list(100)
+    
+    # Get the latest timestamp for next poll
+    latest_timestamp = None
+    if messages:
+        latest_timestamp = messages[-1].get("created_at")
+    
+    # Enrich with client info if not filtering by client
+    if not client_id and messages:
+        client_ids = list({m.get("client_id") for m in messages if m.get("client_id")})
+        clients_list = await db.clients.find(
+            {"id": {"$in": client_ids}},
+            {"_id": 0, "id": 1, "name": 1, "phone": 1}
+        ).to_list(len(client_ids)) if client_ids else []
+        clients_map = {c["id"]: c for c in clients_list}
+        
+        for msg in messages:
+            msg["client"] = clients_map.get(msg.get("client_id"))
+    
+    return {
+        "messages": messages,
+        "count": len(messages),
+        "latest_timestamp": latest_timestamp,
+        "poll_interval_ms": 3000  # Suggested poll interval
+    }
+
+
+@api_router.get("/conversations/activity/live")
+async def get_live_activity(
+    shop: Shop = Depends(get_shop),
+    minutes: int = 30
+):
+    """
+    Get recent conversation activity for the live dashboard view.
+    
+    Shows the most recent messages across all conversations,
+    useful for seeing the "autopilot in action".
+    """
+    since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    
+    messages = await db.messages.find({
+        "shop_id": shop.id,
+        "created_at": {"$gte": since.isoformat()}
+    }, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    
+    # Enrich with client info
+    client_ids = list({m.get("client_id") for m in messages if m.get("client_id")})
+    clients_list = await db.clients.find(
+        {"id": {"$in": client_ids}},
+        {"_id": 0, "id": 1, "name": 1, "phone": 1}
+    ).to_list(len(client_ids)) if client_ids else []
+    clients_map = {c["id"]: c for c in clients_list}
+    
+    for msg in messages:
+        msg["client"] = clients_map.get(msg.get("client_id"))
+    
+    # Reverse to show chronological order
+    messages.reverse()
+    
+    return {
+        "messages": messages,
+        "since": since.isoformat(),
+        "count": len(messages)
+    }
+
+
 # ==================== WAITLIST ENDPOINTS ====================
 
 @api_router.get("/waitlist")
