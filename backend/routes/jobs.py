@@ -54,7 +54,7 @@ async def run_daily_summary(shop: Shop = Depends(get_shop)):
 @router.get("/jobs/daily-summary/preview")
 async def preview_daily_summary(shop: Shop = Depends(get_shop)):
     agent = OwnerOpsAgent(db, shop.model_dump())
-    data = await agent.gather_daily_data(shop.id)
+    data = await agent.compile_daily_stats()
     return {"preview": data}
 
 
