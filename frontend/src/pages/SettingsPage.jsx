@@ -417,6 +417,79 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
+        {/* Integrations */}
+        <Card className="bg-card border-border">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-500/10 rounded-lg flex items-center justify-center">
+                <Link2 className="w-5 h-5 text-indigo-400" />
+              </div>
+              <div>
+                <CardTitle className="font-heading">Integrations</CardTitle>
+                <CardDescription>Connected external services</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Stripe */}
+            <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 p-4" data-testid="stripe-integration-card">
+              <div className="flex items-center gap-3">
+                <CreditCard className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <p className="text-sm font-medium">Stripe Payments</p>
+                  <p className="text-xs text-muted-foreground">Deposit collection & payment processing</p>
+                </div>
+              </div>
+              <Badge className="bg-emerald-500/20 text-emerald-400" data-testid="stripe-status-badge">
+                <CheckCircle2 className="w-3 h-3 mr-1" /> Active
+              </Badge>
+            </div>
+
+            {/* Google Calendar */}
+            <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 p-4" data-testid="gcal-integration-card">
+              <div className="flex items-center gap-3">
+                <CalendarDays className="w-5 h-5 text-blue-400" />
+                <div>
+                  <p className="text-sm font-medium">Google Calendar</p>
+                  <p className="text-xs text-muted-foreground">
+                    {calendarStatus.connected
+                      ? `Connected as ${calendarStatus.email}`
+                      : "Sync appointments to your calendar"}
+                  </p>
+                </div>
+              </div>
+              {calendarStatus.connected ? (
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-emerald-500/20 text-emerald-400" data-testid="gcal-status-badge">
+                    <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={disconnectCalendar}
+                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    data-testid="disconnect-calendar-btn"
+                  >
+                    <Link2Off className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={connectCalendar}
+                  disabled={connectingCalendar}
+                  data-testid="connect-calendar-btn"
+                  className="gap-1"
+                >
+                  <Link2 className="w-4 h-4" />
+                  {connectingCalendar ? "Connecting..." : "Connect"}
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Test SMS */}
         <Card className="bg-card border-border">
           <CardHeader>
