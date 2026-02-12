@@ -18,6 +18,8 @@ import ReportingPage from "./pages/ReportingPage";
 import JobsPage from "./pages/JobsPage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import PaymentCancelPage from "./pages/PaymentCancelPage";
+import BookingPage from "./pages/BookingPage";
+import BookingConfirmationPage from "./pages/BookingConfirmationPage";
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -127,6 +129,8 @@ function App() {
             {/* Public Routes */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/sms-consent" element={<SMSConsentPage />} />
+            <Route path="/book" element={<BookingPage />} />
+            <Route path="/book/confirmation" element={<BookingConfirmationPage />} />
             <Route path="/payment/success" element={
               <ProtectedRoute>
                 <PaymentSuccessPage />
