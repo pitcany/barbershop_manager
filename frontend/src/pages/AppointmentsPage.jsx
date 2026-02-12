@@ -281,9 +281,9 @@ export default function AppointmentsPage() {
                                 size="sm"
                                 className="h-8 text-xs gap-1 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
                                 onClick={() => initiateDeposit(apt.id)}
-                                data-testid={`pay-deposit-btn-${apt.id}`}
+                                data-testid={`send-deposit-link-btn-${apt.id}`}
                               >
-                                <CreditCard className="w-3 h-3" /> Pay Deposit
+                                <CreditCard className="w-3 h-3" /> Send Deposit Link
                               </Button>
                             )}
                             <Select
