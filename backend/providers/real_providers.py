@@ -236,7 +236,7 @@ class GoogleCalendarProvider(CalendarProvider):
     
     async def _get_service(self):
         """Get an authenticated Google Calendar service using stored OAuth tokens"""
-        if not self.db or not self.client_id:
+        if self.db is None or not self.client_id:
             return None
         
         tokens_doc = await self.db.google_calendar_tokens.find_one({}, {"_id": 0})
