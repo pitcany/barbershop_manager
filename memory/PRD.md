@@ -9,53 +9,68 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 - **Auth**: JWT + bcrypt
 - **External Services**: Provider abstraction (real/mock) for Twilio, Stripe, SendGrid, Google Calendar
 
+## Agent System
+| Agent | Status | Description |
+|-------|--------|-------------|
+| FrontDeskAgent | Active | Handles inbound SMS, booking, template responses |
+| NoShowEnforcementAgent | Active | Deposit requests, no-show detection |
+| WaitlistFillAgent | Active | Finds matches, contacts waitlist clients |
+| OwnerOpsAgent | Active | Daily summary emails to shop owner |
+| RetentionRebookAgent | Active | Re-engages lapsed clients via email/SMS |
+
+## Background Jobs (APScheduler)
+| Job | Schedule | Description |
+|-----|----------|-------------|
+| Appointment Reminders | Every hour | SMS reminders for upcoming appointments |
+| Daily Summary Email | Daily 20:00 UTC | Operational summary to shop owner |
+| Client Retention Sweep | Daily 14:00 UTC | Email/SMS outreach to lapsed clients |
+
 ## What's Been Implemented
 
 ### Phase 1: MVP Core (Feb 6)
 - [x] All database models + provider abstraction layer
-- [x] Agent system (FrontDeskAgent, NoShowEnforcementAgent, WaitlistFillAgent)
+- [x] Agent system (FrontDesk, NoShow, Waitlist)
 - [x] Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
 - [x] SMS compliance, audit logging, revenue recovery tracking
-- [x] SendGrid email integration, Twilio/Stripe webhooks
 
 ### Phase 2: High-Impact Enhancements (Feb 12)
 - [x] Scheduling Engine with conflict prevention
-- [x] Client Management Dashboard (search, create, history)
+- [x] Client Management Dashboard (search, create, history, booking)
 - [x] Real-Time Conversations with live polling
-- [x] Client Detail page with appointment booking
 
 ### Phase 3: Background Tasks & OwnerOpsAgent (Feb 12)
-- [x] APScheduler: hourly reminders + daily 20:00 UTC summary
-- [x] OwnerOpsAgent: compiles stats, sends HTML email to shop owner
-- [x] Manual trigger + preview endpoints for both jobs
+- [x] APScheduler: hourly reminders + daily summary + retention sweep
+- [x] OwnerOpsAgent: daily HTML summary email to shop owner
 
 ### Phase 4: Dashboards (Feb 12)
-- [x] Reporting Dashboard: KPI cards, appointment trend chart, status pie, revenue line, barber performance, message activity, recovery events, period selector
-- [x] Jobs Dashboard: scheduler status, job cards with Run Now/Preview, execution history
+- [x] Reporting Dashboard: KPIs, charts, barber performance, recovery events
+- [x] Jobs Dashboard: scheduler status, run/preview, execution history
+
+### Phase 5: RetentionRebookAgent (Feb 12)
+- [x] Multi-touch escalation: email touch 1 (friendly), touch 2 (warmer), SMS touch 3 (high-signal only)
+- [x] Configurable lapse threshold + cooldown period in Settings
+- [x] Outreach history tracking + cooldown enforcement
+- [x] Scheduled daily sweep at 14:00 UTC
 
 ## Mocked Integrations
 - Twilio SMS (TWILIO_ENABLED=false) — awaiting credentials
 - Stripe Payments (STRIPE_ENABLED=false)
 - Google Calendar (CALENDAR_ENABLED=false)
-- SendGrid: real provider, trial expired (401)
+- SendGrid: **Active** (new API key working)
 
 ## Prioritized Backlog
 
 ### P1 (Next)
 - [ ] Enable Twilio for real SMS (pending credentials)
-- [ ] Fix SendGrid (trial expired — user to upgrade plan)
-- [ ] RetentionRebookAgent implementation
-
-### P2 (Nice to Have)
 - [ ] Real Stripe integration for deposits/no-show fees
 - [ ] Real Google Calendar integration
 
-### P3 (Future)
+### P2 (Future)
+- [ ] Client self-service portal (confirm/reschedule via link)
 - [ ] Migrate MongoDB to PostgreSQL
 - [ ] Refactor server.py into modular route files
-- [ ] Multi-shop support, client portal
+- [ ] Multi-shop support
 
 ## Credentials
 - **Admin**: username=admin, password=admin123
 - **Preview**: https://waitlist-hero.preview.emergentagent.com
-- **Shop owner email**: yannik@pitcananalytics.com
