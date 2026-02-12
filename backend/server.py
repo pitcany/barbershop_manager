@@ -132,7 +132,7 @@ from deps import create_access_token, verify_token, get_current_user, get_shop
 async def login(request: LoginRequest, raw_request: Request):
     """Admin login"""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not await check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
+    if not check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
 
     admin = await db.admin_users.find_one({"username": request.username}, {"_id": 0})
