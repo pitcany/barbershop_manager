@@ -5,8 +5,6 @@ import Layout from "../components/layout/Layout";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { TrendingUp, DollarSign, AlertTriangle, Users, ArrowUpRight, Calendar, MessageSquare, Activity } from "lucide-react";
 
-const API = process.env.REACT_APP_BACKEND_URL;
-
 const COLORS = ["#D4AF37", "#22c55e", "#ef4444", "#3b82f6", "#a855f7", "#f59e0b"];
 
 function StatCard({ icon: Icon, label, value, sub, color = "#D4AF37" }) {
