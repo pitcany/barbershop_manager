@@ -62,7 +62,6 @@ async def update_shop_policy(update: PolicyUpdate, shop: Shop = Depends(get_shop
 async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    week_start = (now - timedelta(days=7)).isoformat()
     month_start = (now - timedelta(days=30)).isoformat()
 
     # Today's appointments
