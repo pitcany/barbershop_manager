@@ -1682,7 +1682,7 @@ async def list_calendar_events(shop: Shop = Depends(get_shop)):
 async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
     """Public endpoint for SMS consent form (compliance-compliant)"""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not await check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
+    if not check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     # Find shop (using first shop for MVP)
