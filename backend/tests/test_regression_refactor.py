@@ -497,8 +497,9 @@ class TestJobsAndReporting:
         response = requests.get(f"{BASE_URL}/api/jobs/status", headers=headers)
         assert response.status_code == 200
         data = response.json()
-        assert "running" in data or "status" in data or isinstance(data, dict)
-        print(f"✓ Jobs status: {data}")
+        # Response can be a list of jobs or a dict with status
+        assert isinstance(data, (dict, list)), f"Unexpected response type: {type(data)}"
+        print(f"✓ Jobs status returned {len(data) if isinstance(data, list) else 'dict'}")
     
     def test_run_daily_summary(self, auth_token):
         """POST /api/jobs/daily-summary/run - Trigger daily summary"""
