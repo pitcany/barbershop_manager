@@ -18,7 +18,12 @@ import {
   Save,
   Store,
   Send,
-  AlertCircle
+  AlertCircle,
+  CalendarDays,
+  CreditCard,
+  Link2,
+  Link2Off,
+  CheckCircle2
 } from "lucide-react";
 
 export default function SettingsPage() {
@@ -27,6 +32,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testSMS, setTestSMS] = useState({ phone: "", message: "" });
   const [sendingTest, setSendingTest] = useState(false);
+  const [calendarStatus, setCalendarStatus] = useState({ connected: false, email: "" });
+  const [connectingCalendar, setConnectingCalendar] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
