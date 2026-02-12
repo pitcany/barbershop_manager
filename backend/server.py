@@ -1455,39 +1455,57 @@ async def stripe_webhook(request: Request):
         logger.error(f"Stripe webhook error: {result['error']}")
         return JSONResponse(content={"status": "error"}, status_code=400)
     
-    # Update payment status if we have a session_id
-    if "session_id" in result:
-        # Find the payment record
-        payment_record = await db.payments.find_one(
-            {"stripe_session_id": result["session_id"]},
-            {"_id": 0}
-        )
+    session_id = result.get("session_id")
+    payment_status = result.get("payment_status")
+    
+    if session_id and payment_status:
+        now_iso = datetime.now(timezone.utc).isoformat()
         
-        if payment_record and result.get("payment_status") == "paid":
-            # Update payment status
-            await db.payments.update_one(
-                {"stripe_session_id": result["session_id"]},
-                {"$set": {
-                    "status": "completed",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }}
+        if payment_status == "paid":
+            # Update payment_transactions (idempotent - only if not already paid)
+            txn_result = await db.payment_transactions.update_one(
+                {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                {"$set": {"payment_status": "paid", "status": "completed", "updated_at": now_iso}}
             )
             
-            # Hook: Log no-show fee revenue if applicable
-            if payment_record.get("appointment_id"):
-                appointment = await db.appointments.find_one(
-                    {"id": payment_record["appointment_id"]},
-                    {"_id": 0}
+            if txn_result.modified_count > 0:
+                # Update legacy payments
+                await db.payments.update_one(
+                    {"stripe_session_id": session_id},
+                    {"$set": {"status": "completed", "updated_at": now_iso}}
                 )
-                if appointment:
-                    await log_no_show_fee_on_payment_success(db, payment_record, appointment)
-        elif payment_record:
+                
+                # Find transaction to get appointment_id
+                txn = await db.payment_transactions.find_one(
+                    {"session_id": session_id}, {"_id": 0}
+                )
+                if txn and txn.get("appointment_id"):
+                    await db.appointments.update_one(
+                        {"id": txn["appointment_id"]},
+                        {"$set": {
+                            "deposit_paid": True,
+                            "status": AppointmentStatus.DEPOSIT_PAID.value,
+                            "updated_at": now_iso
+                        }}
+                    )
+                    
+                    payment_record = await db.payments.find_one(
+                        {"stripe_session_id": session_id}, {"_id": 0}
+                    )
+                    appointment = await db.appointments.find_one(
+                        {"id": txn["appointment_id"]}, {"_id": 0}
+                    )
+                    if payment_record and appointment:
+                        await log_no_show_fee_on_payment_success(db, payment_record, appointment)
+        
+        elif payment_status in ("unpaid", "no_payment_required"):
+            await db.payment_transactions.update_one(
+                {"session_id": session_id},
+                {"$set": {"payment_status": payment_status, "status": "failed", "updated_at": now_iso}}
+            )
             await db.payments.update_one(
-                {"stripe_session_id": result["session_id"]},
-                {"$set": {
-                    "status": "failed",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }}
+                {"stripe_session_id": session_id},
+                {"$set": {"status": "failed", "updated_at": now_iso}}
             )
     
     return JSONResponse(content={"status": "received"})
