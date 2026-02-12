@@ -12,7 +12,7 @@ import {
   Scissors,
   Menu,
   X,
-  ClipboardList
+  List
 } from "lucide-react";
 
 const navItems = [
@@ -20,7 +20,7 @@ const navItems = [
   { path: "/clients", label: "Clients", icon: Users },
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
   { path: "/appointments", label: "Appointments", icon: Calendar },
-  { path: "/waitlist", label: "Waitlist", icon: ClipboardList },
+  { path: "/waitlist", label: "Waitlist", icon: List },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
