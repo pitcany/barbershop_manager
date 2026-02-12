@@ -5,7 +5,13 @@ from typing import Optional
 import os
 
 from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit
-from models import Shop, LoginRequest, TokenResponse, PolicyUpdate
+from models import (
+    Shop, LoginRequest, TokenResponse, PolicyUpdate,
+    CreateBarberRequest, UpdateBarberRequest,
+    CreateServiceRequest, UpdateServiceRequest,
+    UpdateShopDetailsRequest,
+)
+import uuid
 
 router = APIRouter()
 
