@@ -46,14 +46,14 @@ async def preview_reminders(shop: Shop = Depends(get_shop)):
 
 @router.post("/jobs/daily-summary/run")
 async def run_daily_summary(shop: Shop = Depends(get_shop)):
-    agent = OwnerOpsAgent(db)
+    agent = OwnerOpsAgent(db, shop.model_dump())
     result = await agent.run_daily_summary(shop.id)
     return {"message": "Daily summary executed", "result": result}
 
 
 @router.get("/jobs/daily-summary/preview")
 async def preview_daily_summary(shop: Shop = Depends(get_shop)):
-    agent = OwnerOpsAgent(db)
+    agent = OwnerOpsAgent(db, shop.model_dump())
     data = await agent.gather_daily_data(shop.id)
     return {"preview": data}
 
@@ -65,14 +65,14 @@ async def scheduler_status(user: dict = Depends(get_current_user)):
 
 @router.post("/jobs/retention/run")
 async def run_retention_sweep(shop: Shop = Depends(get_shop)):
-    agent = RetentionRebookAgent(db)
+    agent = RetentionRebookAgent(db, shop.model_dump())
     result = await agent.run_retention_sweep(shop.id)
     return result
 
 
 @router.get("/jobs/retention/preview")
 async def preview_retention(shop: Shop = Depends(get_shop)):
-    agent = RetentionRebookAgent(db)
+    agent = RetentionRebookAgent(db, shop.model_dump())
     preview = await agent.preview_targets(shop.id)
     return preview
 
