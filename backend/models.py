@@ -421,11 +421,12 @@ class UpdateClientRequest(BaseModel):
 
 
 class CreateWaitlistRequest(BaseModel):
-    client_id: str
-    service_id: str
+    client_id: Optional[str] = None
+    service_id: Optional[str] = None
     preferred_date: str
-    barber_id: Optional[str] = None
+    preferred_barber_id: Optional[str] = None
     flexible_hours: int = 2
+    notes: Optional[str] = None
 
     @field_validator("flexible_hours")
     @classmethod
