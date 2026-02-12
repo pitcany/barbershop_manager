@@ -400,6 +400,7 @@ class CreateClientRequest(BaseModel):
     phone: str
     email: Optional[str] = None
     sms_consent: bool = False
+    notes: Optional[str] = None
 
     @field_validator("phone")
     @classmethod
