@@ -1694,6 +1694,40 @@ async def scheduler_status(user: dict = Depends(get_current_user)):
     return {"scheduler": "running", "jobs": jobs}
 
 
+@api_router.post("/jobs/retention/run")
+async def run_retention_sweep(shop: Shop = Depends(get_shop)):
+    """Manually trigger the retention rebook sweep."""
+    agent = RetentionRebookAgent(db, shop.model_dump())
+    result = await agent.run()
+    return result
+
+
+@api_router.get("/jobs/retention/preview")
+async def preview_retention(shop: Shop = Depends(get_shop)):
+    """Preview which clients are lapsed without sending any messages."""
+    agent = RetentionRebookAgent(db, shop.model_dump())
+    lapsed = await agent.find_lapsed_clients()
+    return {
+        "enabled": agent.enabled,
+        "lapse_threshold_weeks": agent.lapse_weeks,
+        "cooldown_days": agent.cooldown_days,
+        "lapsed_clients": len(lapsed),
+        "clients": lapsed,
+    }
+
+
+@api_router.get("/retention/outreach-history")
+async def retention_outreach_history(
+    limit: int = 50,
+    shop: Shop = Depends(get_shop)
+):
+    """Get history of retention outreach attempts."""
+    entries = await db.retention_outreach.find(
+        {"shop_id": shop.id}, {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"entries": entries, "count": len(entries)}
+
+
 # ==================== EMAIL OUTBOX ENDPOINT ====================
 
 @api_router.get("/email-outbox")
