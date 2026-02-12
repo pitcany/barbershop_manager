@@ -85,6 +85,40 @@ export default function SettingsPage() {
     }
   };
 
+  const fetchCalendarStatus = async () => {
+    try {
+      const res = await axios.get(`${API}/calendar/status`);
+      setCalendarStatus(res.data);
+    } catch (error) {
+      console.error("Failed to fetch calendar status:", error);
+    }
+  };
+
+  const connectCalendar = async () => {
+    setConnectingCalendar(true);
+    try {
+      const res = await axios.get(`${API}/oauth/calendar/login`, {
+        headers: { "x-origin": window.location.origin }
+      });
+      if (res.data.authorization_url) {
+        window.location.href = res.data.authorization_url;
+      }
+    } catch (error) {
+      toast.error("Failed to initiate Google Calendar connection");
+      setConnectingCalendar(false);
+    }
+  };
+
+  const disconnectCalendar = async () => {
+    try {
+      await axios.post(`${API}/calendar/disconnect`);
+      setCalendarStatus({ connected: false, email: "" });
+      toast.success("Google Calendar disconnected");
+    } catch (error) {
+      toast.error("Failed to disconnect Google Calendar");
+    }
+  };
+
   const handleSave = async () => {
     // Client-side validation
     if (formData.deposit_amount < 0) {
