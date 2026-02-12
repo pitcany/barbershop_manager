@@ -1755,6 +1755,121 @@ async def list_recovered_revenue_events(
     }
 
 
+# ==================== REPORTING ANALYTICS ====================
+
+@api_router.get("/reporting/overview")
+async def reporting_overview(
+    days: int = 30,
+    shop: Shop = Depends(get_shop)
+):
+    """
+    Comprehensive reporting dashboard data.
+    Aggregates appointments, revenue, no-shows, and activity over a period.
+    """
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=days)).isoformat()
+
+    # Appointment stats by status
+    apt_pipeline = [
+        {"$match": {"shop_id": shop.id, "scheduled_at": {"$gte": start}}},
+        {"$group": {"_id": "$status", "count": {"$sum": 1}, "revenue": {"$sum": "$price"}}}
+    ]
+    apt_stats = await db.appointments.aggregate(apt_pipeline).to_list(20)
+    by_status = {r["_id"]: {"count": r["count"], "revenue": r["revenue"]} for r in apt_stats}
+    total_apts = sum(r["count"] for r in apt_stats)
+
+    # Revenue recovered by source
+    rev_pipeline = [
+        {"$match": {"shop_id": shop.id, "attributed_at": {"$gte": start}}},
+        {"$group": {"_id": "$source", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}}
+    ]
+    rev_stats = await db.recovered_revenue_events.aggregate(rev_pipeline).to_list(20)
+    recovered_by_source = {r["_id"]: {"amount": r["total"], "count": r["count"]} for r in rev_stats}
+    total_recovered = sum(r["total"] for r in rev_stats)
+
+    # Daily appointment trend
+    daily_pipeline = [
+        {"$match": {"shop_id": shop.id, "scheduled_at": {"$gte": start}}},
+        {"$addFields": {"day": {"$substr": ["$scheduled_at", 0, 10]}}},
+        {"$group": {"_id": "$day", "total": {"$sum": 1},
+                     "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+                     "no_shows": {"$sum": {"$cond": [{"$eq": ["$status", "no_show"]}, 1, 0]}},
+                     "cancelled": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}},
+                     "revenue": {"$sum": "$price"}}},
+        {"$sort": {"_id": 1}}
+    ]
+    daily_trend = await db.appointments.aggregate(daily_pipeline).to_list(60)
+
+    # Recovered revenue events list
+    recovered_events = await db.recovered_revenue_events.find(
+        {"shop_id": shop.id, "attributed_at": {"$gte": start}}, {"_id": 0}
+    ).sort("attributed_at", -1).to_list(100)
+
+    # Barber performance
+    barber_pipeline = [
+        {"$match": {"shop_id": shop.id, "scheduled_at": {"$gte": start}}},
+        {"$group": {"_id": "$barber_id", "total": {"$sum": 1},
+                     "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+                     "no_shows": {"$sum": {"$cond": [{"$eq": ["$status", "no_show"]}, 1, 0]}},
+                     "revenue": {"$sum": "$price"}}}
+    ]
+    barber_stats = await db.appointments.aggregate(barber_pipeline).to_list(20)
+    # Enrich with barber names
+    for bs in barber_stats:
+        barber = await db.barbers.find_one({"id": bs["_id"]}, {"_id": 0, "name": 1})
+        bs["name"] = barber["name"] if barber else bs["_id"]
+        del bs["_id"]
+
+    # Message activity
+    msg_pipeline = [
+        {"$match": {"shop_id": shop.id, "created_at": {"$gte": start}}},
+        {"$group": {"_id": "$direction", "count": {"$sum": 1}}}
+    ]
+    msg_stats = await db.messages.aggregate(msg_pipeline).to_list(5)
+    messages = {r["_id"]: r["count"] for r in msg_stats}
+
+    # Audit log stats
+    audit_pipeline = [
+        {"$match": {"shop_id": shop.id, "created_at": {"$gte": start}}},
+        {"$group": {"_id": {"provider": "$provider", "success": "$success"}, "count": {"$sum": 1}}}
+    ]
+    audit_stats = await db.integration_audit_log.aggregate(audit_pipeline).to_list(50)
+
+    no_shows = by_status.get("no_show", {}).get("count", 0)
+
+    return {
+        "period_days": days,
+        "appointments": {
+            "total": total_apts,
+            "by_status": by_status,
+            "no_show_rate": round((no_shows / total_apts * 100) if total_apts > 0 else 0, 1),
+        },
+        "revenue": {
+            "total_earned": sum(r.get("revenue", 0) for r in apt_stats if r["_id"] == "completed"),
+            "total_recovered": total_recovered,
+            "recovered_by_source": recovered_by_source,
+        },
+        "daily_trend": [{"date": d["_id"], **{k: v for k, v in d.items() if k != "_id"}} for d in daily_trend],
+        "recovered_events": recovered_events,
+        "barber_performance": barber_stats,
+        "messages": messages,
+        "audit_summary": [{"provider": a["_id"]["provider"], "success": a["_id"]["success"], "count": a["count"]} for a in audit_stats],
+    }
+
+
+@api_router.get("/reporting/jobs-history")
+async def jobs_history(
+    limit: int = 50,
+    user: dict = Depends(get_current_user)
+):
+    """Get history of scheduled job executions from audit log."""
+    entries = await db.integration_audit_log.find(
+        {"action": {"$in": ["daily_summary_email", "appointment_reminder", "send_sms", "send_email"]}},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"entries": entries, "count": len(entries)}
+
+
 # ==================== HEALTH CHECK ====================
 
 @api_router.get("/")
