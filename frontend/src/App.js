@@ -16,6 +16,7 @@ import ClientsPage from "./pages/ClientsPage";
 import ClientDetailPage from "./pages/ClientDetailPage";
 import ReportingPage from "./pages/ReportingPage";
 import JobsPage from "./pages/JobsPage";
+import ManagePage from "./pages/ManagePage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import PaymentCancelPage from "./pages/PaymentCancelPage";
 import BookingPage from "./pages/BookingPage";
@@ -186,6 +187,11 @@ function App() {
             <Route path="/jobs" element={
               <ProtectedRoute>
                 <JobsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/manage" element={
+              <ProtectedRoute>
+                <ManagePage />
               </ProtectedRoute>
             } />
             <Route path="/settings" element={
