@@ -122,8 +122,6 @@ async def check_rate_limit_mongodb(key: str, max_requests: int, window_seconds: 
 # These are kept here for backward compatibility with seed data
 
 from deps import create_access_token, verify_token, get_current_user, get_shop
-    except jwt.InvalidTokenError:
-        return None
 
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
