@@ -83,5 +83,5 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 
 ## Credentials
 - **Admin**: username=admin, password=admin123
-- **Public Booking**: https://booking-recovery.preview.emergentagent.com/book
-- **Admin Dashboard**: https://booking-recovery.preview.emergentagent.com/login
+- **Public Booking**: https://salon-flow-manager.preview.emergentagent.com/book
+- **Admin Dashboard**: https://salon-flow-manager.preview.emergentagent.com/login
