@@ -71,6 +71,12 @@ export default function SettingsPage() {
     try {
       const response = await axios.get(`${API}/shop`);
       setShop(response.data);
+      setShopDetails({
+        name: response.data.name || "",
+        phone: response.data.phone || "",
+        email: response.data.email || "",
+        address: response.data.address || "",
+      });
       setFormData({
         deposit_amount: response.data.deposit_amount,
         deposit_required_hours: response.data.deposit_required_hours,
