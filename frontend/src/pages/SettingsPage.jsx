@@ -159,7 +159,23 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSendTestSMS = async () => {
+  const handleSaveDetails = async () => {
+    if (!shopDetails.name.trim()) { toast.error("Shop name is required"); return; }
+    setSavingDetails(true);
+    try {
+      await axios.patch(`${API}/shop/details`, shopDetails);
+      toast.success("Shop details updated");
+      fetchShop();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to update shop details"); }
+    finally { setSavingDetails(false); }
+  };
+
+  const copyBookingLink = () => {
+    const link = `${window.location.origin}/book`;
+    navigator.clipboard.writeText(link).then(() => toast.success("Booking link copied!")).catch(() => toast.error("Failed to copy"));
+  };
+
+  const sendTestSMS = async () => {
     if (!testSMS.phone || !testSMS.message) {
       toast.error("Please enter phone number and message");
       return;
