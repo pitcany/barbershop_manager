@@ -12,15 +12,15 @@ import {
   Scissors,
   Menu,
   X,
-  List
+  User
 } from "lucide-react";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/clients", label: "Clients", icon: Users },
+  { path: "/clients", label: "Clients", icon: User },
   { path: "/conversations", label: "Conversations", icon: MessageSquare },
   { path: "/appointments", label: "Appointments", icon: Calendar },
-  { path: "/waitlist", label: "Waitlist", icon: List },
+  { path: "/waitlist", label: "Waitlist", icon: Users },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
