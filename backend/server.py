@@ -61,6 +61,18 @@ async def startup_event():
     """Initialize database with seed data if empty, then start scheduler"""
     logger.info("Starting Barbershop Autopilot...")
 
+    # Performance indexes for high-traffic queries
+    await db.appointments.create_index([("shop_id", 1), ("scheduled_at", -1)])
+    await db.appointments.create_index([("shop_id", 1), ("status", 1), ("scheduled_at", -1)])
+    await db.appointments.create_index([("client_id", 1), ("shop_id", 1), ("scheduled_at", -1)])
+    await db.clients.create_index([("shop_id", 1), ("created_at", -1)])
+    await db.clients.create_index([("shop_id", 1), ("phone", 1)])
+    await db.messages.create_index([("shop_id", 1), ("client_id", 1), ("created_at", -1)])
+    await db.messages.create_index([("shop_id", 1), ("created_at", -1)])
+    await db.waitlist.create_index([("shop_id", 1), ("active", 1)])
+    await db.events.create_index([("shop_id", 1), ("created_at", -1)])
+    await db.payments.create_index([("shop_id", 1), ("status", 1), ("payment_type", 1)])
+
     shop_count = await db.shops.count_documents({})
     if shop_count == 0:
         logger.info("Seeding demo data...")
