@@ -63,54 +63,43 @@ class AppointmentReminderJob:
             }
         }, {"_id": 0}).to_list(100)
         
-        # Filter out appointments that already have a reminder
-        appointments_needing_reminder = []
-        for apt in appointments:
-            # Check if reminder was already sent
-            reminder_exists = await self.db.messages.find_one({
+        # Batch check which appointments already have reminders
+        apt_ids = [apt["id"] for apt in appointments]
+        existing_reminders = await self.db.messages.distinct(
+            "appointment_id",
+            {
                 "shop_id": self.shop.id,
-                "client_id": apt["client_id"],
-                "appointment_id": apt["id"],
+                "appointment_id": {"$in": apt_ids},
                 "direction": MessageDirection.OUTBOUND.value,
                 "$or": [
                     {"message_type": "appointment_reminder"},
                     {"content": {"$regex": "^Reminder:"}}
                 ]
-            })
-            
-            if not reminder_exists:
-                appointments_needing_reminder.append(apt)
-        
+            }
+        )
+        reminded_set = set(existing_reminders)
+
+        appointments_needing_reminder = [
+            apt for apt in appointments if apt["id"] not in reminded_set
+        ]
+
         return appointments_needing_reminder
     
-    async def send_reminder(self, appointment: dict) -> bool:
+    async def send_reminder(self, appointment: dict, clients_map: dict, barbers_map: dict, services_map: dict) -> bool:
         """
         Send a reminder for a single appointment.
-        
+
         Returns True if sent successfully, False otherwise.
         """
-        # Get client
-        client = await self.db.clients.find_one(
-            {"id": appointment["client_id"]},
-            {"_id": 0}
-        )
-        
+        client = clients_map.get(appointment["client_id"])
         if not client:
             logger.warning(f"Client not found for appointment {appointment['id']}")
             return False
-        
-        # Get barber name
-        barber = await self.db.barbers.find_one(
-            {"id": appointment["barber_id"]},
-            {"_id": 0, "name": 1}
-        )
+
+        barber = barbers_map.get(appointment.get("barber_id"))
         barber_name = barber["name"] if barber else "your barber"
-        
-        # Get service name
-        service = await self.db.services.find_one(
-            {"id": appointment["service_id"]},
-            {"_id": 0, "name": 1}
-        )
+
+        service = services_map.get(appointment.get("service_id"))
         service_name = service["name"] if service else "your appointment"
         
         # Parse scheduled time
@@ -154,23 +143,36 @@ class AppointmentReminderJob:
     async def run(self) -> dict:
         """
         Run the reminder job.
-        
+
         Returns a summary of actions taken.
         """
         logger.info(f"Running appointment reminder job for shop {self.shop.id}")
-        
+
         appointments = await self.get_appointments_needing_reminder()
-        
+
+        # Pre-fetch all clients, barbers, services needed for reminders
+        client_ids = list({apt["client_id"] for apt in appointments if apt.get("client_id")})
+        barber_ids = list({apt["barber_id"] for apt in appointments if apt.get("barber_id")})
+        service_ids = list({apt["service_id"] for apt in appointments if apt.get("service_id")})
+
+        clients_list = await self.db.clients.find({"id": {"$in": client_ids}}, {"_id": 0}).to_list(len(client_ids)) if client_ids else []
+        barbers_list = await self.db.barbers.find({"id": {"$in": barber_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(barber_ids)) if barber_ids else []
+        services_list = await self.db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(service_ids)) if service_ids else []
+
+        clients_map = {c["id"]: c for c in clients_list}
+        barbers_map = {b["id"]: b for b in barbers_list}
+        services_map = {s["id"]: s for s in services_list}
+
         results = {
             "total_found": len(appointments),
             "sent": 0,
             "failed": 0,
             "blocked": 0
         }
-        
+
         for apt in appointments:
             try:
-                success = await self.send_reminder(apt)
+                success = await self.send_reminder(apt, clients_map, barbers_map, services_map)
                 if success:
                     results["sent"] += 1
                 else:
@@ -178,7 +180,7 @@ class AppointmentReminderJob:
             except Exception as e:
                 logger.error(f"Unexpected error sending reminder for {apt.get('id', '?')}: {e}")
                 results["failed"] += 1
-        
+
         logger.info(f"Reminder job complete: {results}")
         return results
 
