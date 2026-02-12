@@ -109,7 +109,7 @@ export default function SMSConsentPage() {
     <div 
       className="min-h-screen flex items-center justify-center p-4"
       style={{
-        backgroundImage: `linear-gradient(to bottom, rgba(9, 9, 11, 0.9), rgba(9, 9, 11, 0.98)), url('https://images.unsplash.com/photo-1758887260983-c171388cf56f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxiYXJiZXIlMjB0b29scyUyMHNjaXNzb3JzJTIwY2xpcHBlcnN8ZW58MHx8fHwxNzcwNDA0NTA3fDA&ixlib=rb-4.1.0&q=85')`,
+        backgroundImage: `linear-gradient(to bottom, rgba(9, 9, 11, 0.9), rgba(9, 9, 11, 0.98)), url('https://images.unsplash.com/photo-1758887260983-c171388cf56f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxiYXJiZXIlMjB0b29scyUyMHNjaXNzb3JzJTIwY2xpcHBlcnN8ZW58MHx8fHwxNzcwNDA0NTA3fDA&ixlib=rb-4.1.0&w=1280&q=60&fm=webp')`,
         backgroundSize: 'cover',
         backgroundPosition: 'center'
       }}

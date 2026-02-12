@@ -97,47 +97,67 @@ class RetentionRebookAgent:
             {"shop_id": self.shop_id}, {"_id": 0}
         ).to_list(1000)
 
+        # Batch query 1: Last completed appointment per client
+        last_visit_pipeline = [
+            {"$match": {"shop_id": self.shop_id, "status": "completed"}},
+            {"$sort": {"scheduled_at": -1}},
+            {"$group": {
+                "_id": "$client_id",
+                "last_scheduled_at": {"$first": "$scheduled_at"},
+            }},
+        ]
+        last_visits = await self.db.appointments.aggregate(last_visit_pipeline).to_list(1000)
+        last_visit_map = {lv["_id"]: lv["last_scheduled_at"] for lv in last_visits}
+
+        # Batch query 2: Recent outreach (cooldown check)
+        cooldown_cutoff = (now - timedelta(days=self.cooldown_days)).isoformat()
+        recent_outreach_pipeline = [
+            {"$match": {"shop_id": self.shop_id, "created_at": {"$gte": cooldown_cutoff}}},
+            {"$group": {"_id": "$client_id"}},
+        ]
+        recent_outreach_list = await self.db.retention_outreach.aggregate(recent_outreach_pipeline).to_list(1000)
+        recently_contacted = {ro["_id"] for ro in recent_outreach_list}
+
+        # Batch query 3: Completed visit counts per client
+        completed_pipeline = [
+            {"$match": {"shop_id": self.shop_id, "status": "completed"}},
+            {"$group": {"_id": "$client_id", "count": {"$sum": 1}}},
+        ]
+        completed_counts = await self.db.appointments.aggregate(completed_pipeline).to_list(1000)
+        completed_map = {cc["_id"]: cc["count"] for cc in completed_counts}
+
+        # Batch query 4: Total outreach counts per client
+        outreach_pipeline = [
+            {"$match": {"shop_id": self.shop_id}},
+            {"$group": {"_id": "$client_id", "count": {"$sum": 1}}},
+        ]
+        outreach_counts = await self.db.retention_outreach.aggregate(outreach_pipeline).to_list(1000)
+        outreach_map = {oc["_id"]: oc["count"] for oc in outreach_counts}
+
+        # In-memory filtering (replaces 4 queries per client with dict lookups)
         lapsed = []
         for client in clients:
             client_id = client["id"]
 
-            # Find their most recent completed appointment
-            last_apt = await self.db.appointments.find_one(
-                {"shop_id": self.shop_id, "client_id": client_id, "status": "completed"},
-                {"_id": 0, "scheduled_at": 1},
-                sort=[("scheduled_at", -1)],
-            )
-            if not last_apt:
-                continue  # Never completed an appointment — skip
+            last_visit_str = last_visit_map.get(client_id)
+            if not last_visit_str:
+                continue  # Never completed an appointment
 
-            last_visit_str = last_apt.get("scheduled_at", "")
             try:
                 last_visit = datetime.fromisoformat(last_visit_str.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
                 continue
 
             if last_visit >= threshold:
-                continue  # Visited recently — not lapsed
+                continue  # Visited recently
 
-            # Check if we already reached out recently (cooldown)
-            recent_outreach = await self.db.retention_outreach.find_one({
-                "shop_id": self.shop_id,
-                "client_id": client_id,
-                "created_at": {"$gte": (now - timedelta(days=self.cooldown_days)).isoformat()},
-            })
+            if client_id in recently_contacted:
+                continue  # Within cooldown
 
-            # Count total completed visits (for signal strength)
-            completed_count = await self.db.appointments.count_documents({
-                "shop_id": self.shop_id, "client_id": client_id, "status": "completed"
-            })
-
-            # Determine current touch level
-            outreach_count = await self.db.retention_outreach.count_documents({
-                "shop_id": self.shop_id, "client_id": client_id
-            })
-
+            completed_count = completed_map.get(client_id, 0)
+            outreach_count = outreach_map.get(client_id, 0)
             days_since = (now - last_visit).days
-            touch = outreach_count + 1  # Next touch number
+            touch = outreach_count + 1
 
             lapsed.append({
                 "client_id": client_id,
@@ -150,7 +170,7 @@ class RetentionRebookAgent:
                 "last_visit": last_visit_str,
                 "next_touch": touch,
                 "high_signal": completed_count >= HIGH_SIGNAL_MIN_VISITS,
-                "in_cooldown": recent_outreach is not None,
+                "in_cooldown": False,  # Already filtered out via recently_contacted
             })
 
         return lapsed

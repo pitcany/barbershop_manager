@@ -3,9 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import os
+import asyncio
 from html import escape
 
-from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit
+from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit, batch_fetch_map
 from models import Shop, LoginRequest, TokenResponse, PolicyUpdate
 
 router = APIRouter()
@@ -60,40 +61,45 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
     week_start = (now - timedelta(days=7)).isoformat()
     month_start = (now - timedelta(days=30)).isoformat()
 
-    # Today's appointments
-    today_count = await db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": today_start}})
+    # Parallelize all counting and aggregation queries
+    (
+        today_count,
+        month_total,
+        month_noshows,
+        revenue_result,
+        waitlist_count,
+        total_clients,
+        deposits_result,
+    ) = await asyncio.gather(
+        db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": today_start}}),
+        db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}}),
+        db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}, "status": "no_show"}),
+        db.appointments.aggregate([
+            {"$match": {"shop_id": shop.id, "status": "completed", "scheduled_at": {"$gte": month_start}}},
+            {"$group": {"_id": None, "total": {"$sum": "$price"}}}
+        ]).to_list(1),
+        db.waitlist.count_documents({"shop_id": shop.id, "active": True}),
+        db.clients.count_documents({"shop_id": shop.id}),
+        db.payments.aggregate([
+            {"$match": {"shop_id": shop.id, "status": "completed", "payment_type": "deposit", "created_at": {"$gte": month_start}}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+        ]).to_list(1),
+    )
+
+    revenue = revenue_result[0]["total"] if revenue_result else 0
+    deposits_collected = deposits_result[0]["total"] if deposits_result else 0
+    no_show_rate = round((month_noshows / month_total * 100) if month_total > 0 else 0, 1)
+
+    # Fetch upcoming appointments (cannot parallelize due to enrichment loop)
     upcoming = await db.appointments.find(
         {"shop_id": shop.id, "scheduled_at": {"$gte": now.isoformat()}, "status": {"$in": ["pending", "confirmed", "deposit_paid"]}},
         {"_id": 0}
     ).sort("scheduled_at", 1).limit(5).to_list(5)
 
+    client_ids = [apt.get("client_id") for apt in upcoming if apt.get("client_id")]
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1})
     for apt in upcoming:
-        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1, "phone": 1})
-        apt["client"] = client or {"name": "Unknown", "phone": ""}
-
-    # No-show rate (30 days)
-    month_total = await db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}})
-    month_noshows = await db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}, "status": "no_show"})
-    no_show_rate = round((month_noshows / month_total * 100) if month_total > 0 else 0, 1)
-
-    # Revenue this month
-    revenue_pipeline = [
-        {"$match": {"shop_id": shop.id, "status": "completed", "scheduled_at": {"$gte": month_start}}},
-        {"$group": {"_id": None, "total": {"$sum": "$price"}}}
-    ]
-    revenue_result = await db.appointments.aggregate(revenue_pipeline).to_list(1)
-    revenue = revenue_result[0]["total"] if revenue_result else 0
-
-    # Deposits collected
-    deposits_pipeline = [
-        {"$match": {"shop_id": shop.id, "status": "completed", "payment_type": "deposit", "created_at": {"$gte": month_start}}},
-        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
-    ]
-    deposits_result = await db.payments.aggregate(deposits_pipeline).to_list(1)
-    deposits_collected = deposits_result[0]["total"] if deposits_result else 0
-
-    # Waitlist fills
-    waitlist_count = await db.waitlist.count_documents({"shop_id": shop.id, "active": True})
+        apt["client"] = clients_map.get(apt.get("client_id"), {"name": "Unknown", "phone": ""})
 
     # Recent events
     recent_events = await db.events.find(
@@ -108,7 +114,7 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
         "deposits_collected": deposits_collected,
         "active_waitlist": waitlist_count,
         "recent_events": recent_events,
-        "total_clients": await db.clients.count_documents({"shop_id": shop.id}),
+        "total_clients": total_clients,
         "month_total_appointments": month_total,
         "month_no_shows": month_noshows,
     }

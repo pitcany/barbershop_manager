@@ -1,25 +1,25 @@
-import { useState, useEffect, createContext, useContext } from "react";
+import { useState, useEffect, createContext, useContext, lazy, Suspense, useMemo, useCallback } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { Toaster, toast } from "sonner";
 
-// Pages
-import LoginPage from "./pages/LoginPage";
-import DashboardPage from "./pages/DashboardPage";
-import ConversationsPage from "./pages/ConversationsPage";
-import AppointmentsPage from "./pages/AppointmentsPage";
-import WaitlistPage from "./pages/WaitlistPage";
-import SettingsPage from "./pages/SettingsPage";
-import SMSConsentPage from "./pages/SMSConsentPage";
-import ClientsPage from "./pages/ClientsPage";
-import ClientDetailPage from "./pages/ClientDetailPage";
-import ReportingPage from "./pages/ReportingPage";
-import JobsPage from "./pages/JobsPage";
-import PaymentSuccessPage from "./pages/PaymentSuccessPage";
-import PaymentCancelPage from "./pages/PaymentCancelPage";
-import BookingPage from "./pages/BookingPage";
-import BookingConfirmationPage from "./pages/BookingConfirmationPage";
+// Lazy-loaded pages
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const ConversationsPage = lazy(() => import("./pages/ConversationsPage"));
+const AppointmentsPage = lazy(() => import("./pages/AppointmentsPage"));
+const WaitlistPage = lazy(() => import("./pages/WaitlistPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const SMSConsentPage = lazy(() => import("./pages/SMSConsentPage"));
+const ClientsPage = lazy(() => import("./pages/ClientsPage"));
+const ClientDetailPage = lazy(() => import("./pages/ClientDetailPage"));
+const ReportingPage = lazy(() => import("./pages/ReportingPage"));
+const JobsPage = lazy(() => import("./pages/JobsPage"));
+const PaymentSuccessPage = lazy(() => import("./pages/PaymentSuccessPage"));
+const PaymentCancelPage = lazy(() => import("./pages/PaymentCancelPage"));
+const BookingPage = lazy(() => import("./pages/BookingPage"));
+const BookingConfirmationPage = lazy(() => import("./pages/BookingConfirmationPage"));
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -95,26 +95,28 @@ const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (username, password) => {
+  const login = useCallback(async (username, password) => {
     const response = await axios.post(`${API}/auth/login`, { username, password });
     localStorage.setItem("token", response.data.access_token);
     await checkAuth();
     return response.data;
-  };
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem("token");
     setUser(null);
-  };
+  }, []);
+
+  const contextValue = useMemo(() => ({
+    user,
+    isAuthenticated: !!user,
+    loading,
+    login,
+    logout
+  }), [user, loading, login, logout]);
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      isAuthenticated: !!user,
-      loading,
-      login,
-      logout
-    }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );
@@ -125,78 +127,84 @@ function App() {
     <div className="App">
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            {/* Public Routes */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/sms-consent" element={<SMSConsentPage />} />
-            <Route path="/book" element={<BookingPage />} />
-            <Route path="/book/confirmation" element={<BookingConfirmationPage />} />
-            <Route path="/payment/success" element={
-              <ProtectedRoute>
-                <PaymentSuccessPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/payment/cancel" element={
-              <ProtectedRoute>
-                <PaymentCancelPage />
-              </ProtectedRoute>
-            } />
-            
-            {/* Protected Routes */}
-            <Route path="/" element={
-              <ProtectedRoute>
-                <DashboardPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/conversations" element={
-              <ProtectedRoute>
-                <ConversationsPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/conversations/:clientId" element={
-              <ProtectedRoute>
-                <ConversationsPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/appointments" element={
-              <ProtectedRoute>
-                <AppointmentsPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/clients" element={
-              <ProtectedRoute>
-                <ClientsPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/clients/:clientId" element={
-              <ProtectedRoute>
-                <ClientDetailPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/waitlist" element={
-              <ProtectedRoute>
-                <WaitlistPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/reporting" element={
-              <ProtectedRoute>
-                <ReportingPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/jobs" element={
-              <ProtectedRoute>
-                <JobsPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/settings" element={
-              <ProtectedRoute>
-                <SettingsPage />
-              </ProtectedRoute>
-            } />
-            
-            {/* Fallback */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={
+            <div className="min-h-screen bg-background flex items-center justify-center">
+              <div className="animate-pulse text-muted-foreground">Loading...</div>
+            </div>
+          }>
+            <Routes>
+              {/* Public Routes */}
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/sms-consent" element={<SMSConsentPage />} />
+              <Route path="/book" element={<BookingPage />} />
+              <Route path="/book/confirmation" element={<BookingConfirmationPage />} />
+              <Route path="/payment/success" element={
+                <ProtectedRoute>
+                  <PaymentSuccessPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/payment/cancel" element={
+                <ProtectedRoute>
+                  <PaymentCancelPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Protected Routes */}
+              <Route path="/" element={
+                <ProtectedRoute>
+                  <DashboardPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/conversations" element={
+                <ProtectedRoute>
+                  <ConversationsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/conversations/:clientId" element={
+                <ProtectedRoute>
+                  <ConversationsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/appointments" element={
+                <ProtectedRoute>
+                  <AppointmentsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/clients" element={
+                <ProtectedRoute>
+                  <ClientsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/clients/:clientId" element={
+                <ProtectedRoute>
+                  <ClientDetailPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/waitlist" element={
+                <ProtectedRoute>
+                  <WaitlistPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/reporting" element={
+                <ProtectedRoute>
+                  <ReportingPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/jobs" element={
+                <ProtectedRoute>
+                  <JobsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings" element={
+                <ProtectedRoute>
+                  <SettingsPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Fallback */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </AuthProvider>
       </BrowserRouter>
       <Toaster position="top-right" richColors />

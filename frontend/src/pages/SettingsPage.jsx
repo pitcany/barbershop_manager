@@ -164,9 +164,9 @@ export default function SettingsPage() {
       toast.success("Settings saved successfully");
       savedDataRef.current = { ...formData };
       setIsDirty(false);
-      fetchShop();
     } catch (error) {
       toast.error("Failed to save settings");
+      fetchShop(); // Only re-fetch on failure to revert form
     } finally {
       setSaving(false);
     }
