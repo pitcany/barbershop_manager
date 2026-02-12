@@ -109,8 +109,12 @@ export default function AppointmentsPage() {
         headers: { "x-origin": window.location.origin }
       });
       if (res.data.checkout_url) {
-        window.open(res.data.checkout_url, "_blank");
-        toast.success("Stripe checkout opened in new tab");
+        navigator.clipboard.writeText(res.data.checkout_url).then(() => {
+          toast.success("Deposit link copied to clipboard — send it to the client");
+        }).catch(() => {
+          toast.success("Deposit link created. Copy from console.");
+          console.log("Deposit link:", res.data.checkout_url);
+        });
       }
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to create deposit link");
