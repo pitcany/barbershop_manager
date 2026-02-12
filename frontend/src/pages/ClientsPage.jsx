@@ -252,7 +252,7 @@ export default function ClientsPage() {
                           </div>
                           <div>
                             <p className="font-medium">{client.name}</p>
-                            <p className="text-xs text-muted-foreground">ID: {client.id.slice(0, 8)}...</p>
+                            <p className="text-xs text-muted-foreground">{client.total_appointments || 0} appointment{client.total_appointments !== 1 ? "s" : ""}</p>
                           </div>
                         </div>
                       </TableCell>

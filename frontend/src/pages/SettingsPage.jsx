@@ -47,6 +47,10 @@ export default function SettingsPage() {
     retention_cooldown_days: 7,
   });
 
+  // Shop details form
+  const [shopDetails, setShopDetails] = useState({ name: "", phone: "", email: "", address: "" });
+  const [savingDetails, setSavingDetails] = useState(false);
+
   useEffect(() => {
     fetchShop();
     fetchCalendarStatus();
