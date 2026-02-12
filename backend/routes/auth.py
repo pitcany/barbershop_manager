@@ -260,13 +260,17 @@ async def get_today_schedule(shop: Shop = Depends(get_shop)):
         {"_id": 0}
     ).sort("scheduled_at", 1).to_list(100)
 
+    client_ids = [apt.get("client_id") for apt in appointments if apt.get("client_id")]
+    barber_ids = [apt.get("barber_id") for apt in appointments if apt.get("barber_id")]
+    service_ids = [apt.get("service_id") for apt in appointments if apt.get("service_id")]
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1})
+    barbers_map = await batch_fetch_map(db.barbers, barber_ids, {"id": 1, "name": 1})
+    services_map = await batch_fetch_map(db.services, service_ids, {"id": 1, "name": 1, "price": 1, "duration_minutes": 1})
+
     for apt in appointments:
-        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1, "phone": 1})
-        apt["client"] = client or {"name": "Unknown", "phone": ""}
-        barber = await db.barbers.find_one({"id": apt.get("barber_id")}, {"_id": 0, "name": 1})
-        apt["barber"] = barber or {"name": "Unknown"}
-        service = await db.services.find_one({"id": apt.get("service_id")}, {"_id": 0, "name": 1, "price": 1, "duration_minutes": 1})
-        apt["service"] = service or {"name": "Unknown", "price": 0}
+        apt["client"] = clients_map.get(apt.get("client_id"), {"name": "Unknown", "phone": ""})
+        apt["barber"] = barbers_map.get(apt.get("barber_id"), {"name": "Unknown"})
+        apt["service"] = services_map.get(apt.get("service_id"), {"name": "Unknown", "price": 0})
 
     return {"appointments": appointments, "total": len(appointments)}
 
