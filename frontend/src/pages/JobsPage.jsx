@@ -4,8 +4,6 @@ import { API } from "../App";
 import Layout from "../components/layout/Layout";
 import { Play, Clock, CheckCircle, XCircle, RefreshCw, Mail, Bell, Activity } from "lucide-react";
 
-const API = process.env.REACT_APP_BACKEND_URL;
-
 function JobCard({ job, onRun, onPreview, running }) {
   const isReminder = job.id === "appointment_reminders";
   const Icon = isReminder ? Bell : Mail;
