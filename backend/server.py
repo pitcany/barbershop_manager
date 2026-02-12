@@ -493,6 +493,11 @@ async def update_appointment_status(
         if status == "cancelled":
             waitlist_agent = WaitlistFillAgent(db, shop)
             await waitlist_agent.process_cancellation(appointment_id)
+            # Delete Google Calendar event
+            gcal_event_id = appointment.get("gcal_event_id")
+            if gcal_event_id:
+                calendar = get_calendar(db)
+                await calendar.delete_event("primary", gcal_event_id)
         elif status == "no_show":
             noshow_agent = NoShowEnforcementAgent(db, shop)
             await noshow_agent.process_no_show(appointment_id)
