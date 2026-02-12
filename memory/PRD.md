@@ -9,6 +9,27 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 - **Auth**: JWT + bcrypt
 - **External Services**: Provider abstraction (real/mock) for Twilio, Stripe, SendGrid, Google Calendar
 
+### Code Structure (Post-Refactor)
+```
+/app/backend/
+  server.py          # Slim entry point (182 lines): app, CORS, startup, seed
+  deps.py            # Shared: db, auth, rate limiting
+  models.py          # Pydantic models
+  routes/
+    __init__.py      # Collects all sub-routers
+    auth.py          # Auth, shop, dashboard, barbers, services, SMS/email test, health
+    appointments.py  # Appointment CRUD, scheduling, availability
+    clients.py       # Clients, conversations, waitlist
+    payments.py      # Stripe payments, mock payment
+    calendar.py      # Google Calendar OAuth, events
+    jobs.py          # Scheduler jobs, reporting, audit, retention
+    public.py        # Public endpoints (no auth)
+    webhooks.py      # Twilio + Stripe webhooks
+  providers/         # Provider abstraction (interfaces, mock, real)
+  agents/            # Business logic agents
+  scheduler.py       # APScheduler config
+```
+
 ## Agent System
 | Agent | Status | Description |
 |-------|--------|-------------|
@@ -18,45 +39,28 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 | OwnerOpsAgent | Active | Daily summary emails to shop owner |
 | RetentionRebookAgent | Active | Re-engages lapsed clients via email/SMS |
 
-## Background Jobs (APScheduler)
-| Job | Schedule | Description |
-|-----|----------|-------------|
-| Appointment Reminders | Every hour | SMS reminders for upcoming appointments |
-| Daily Summary Email | Daily 20:00 UTC | Operational summary to shop owner |
-| Client Retention Sweep | Daily 14:00 UTC | Email/SMS outreach to lapsed clients |
-
 ## What's Been Implemented
 
-### Phase 1: MVP Core (Feb 6)
-- [x] All database models + provider abstraction layer
-- [x] Agent system (FrontDesk, NoShow, Waitlist)
-- [x] Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
-- [x] SMS compliance, audit logging, revenue recovery tracking
-
-### Phase 2: High-Impact Enhancements (Feb 12)
-- [x] Scheduling Engine with conflict prevention
-- [x] Client Management Dashboard (search, create, history, booking)
-- [x] Real-Time Conversations with live polling
-
-### Phase 3: Background Tasks & OwnerOpsAgent (Feb 12)
-- [x] APScheduler: hourly reminders + daily summary + retention sweep
-- [x] OwnerOpsAgent: daily HTML summary email to shop owner
-
-### Phase 4: Dashboards (Feb 12)
-- [x] Reporting Dashboard: KPIs, charts, barber performance, recovery events
-- [x] Jobs Dashboard: scheduler status, run/preview, execution history
-
-### Phase 5: RetentionRebookAgent (Feb 12)
-- [x] Multi-touch escalation: email touch 1 (friendly), touch 2 (warmer), SMS touch 3 (high-signal only)
-- [x] Configurable lapse threshold + cooldown period in Settings
-- [x] Outreach history tracking + cooldown enforcement
-- [x] Scheduled daily sweep at 14:00 UTC
+### Phase 1-5: Core MVP through RetentionRebookAgent (Feb 6-12)
+- All database models + provider abstraction layer
+- Agent system (FrontDesk, NoShow, Waitlist, OwnerOps, RetentionRebook)
+- Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
+- SMS compliance, audit logging, revenue recovery tracking
+- Scheduling Engine with conflict prevention
+- Client Management Dashboard
+- APScheduler background jobs
+- Reporting + Jobs dashboards
 
 ### Phase 6: Stripe & Google Calendar Integrations (Feb 12)
-- [x] **Stripe Payments (REAL)**: Checkout sessions via emergentintegrations, payment_transactions collection, status polling, webhook handler
-- [x] **Google Calendar (REAL OAuth2)**: OAuth flow (login/callback), token storage/refresh, event CRUD (create on booking, delete on cancel), freebusy availability
-- [x] Frontend: Pay Deposit button, Payment Success/Cancel pages, Integrations status in Settings
-- [x] Calendar sync: new appointments auto-create Google Calendar events, cancellations auto-delete events
+- **Stripe Payments (REAL)**: Checkout sessions via emergentintegrations, payment_transactions collection, status polling, webhook handler
+- **Google Calendar (REAL OAuth2)**: OAuth flow, token storage/refresh, event CRUD, freebusy availability
+- Frontend: Pay Deposit button, Payment Success/Cancel pages, Integrations card in Settings
+
+### Phase 7: server.py Refactor (Feb 12)
+- Decomposed 2,555-line server.py into 8 focused route modules + shared deps.py
+- server.py reduced to 182 lines (93% reduction)
+- All 36 endpoints verified working (100% test pass rate)
+- 4 bugs found and fixed during regression testing
 
 ## Integration Status
 | Service | Status | Details |
@@ -68,28 +72,16 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 
 ## Prioritized Backlog
 
-### P1 (Next)
+### P0 (Next)
+- [ ] Client self-service booking portal (public-facing page for clients to book and pay)
+
+### P1
 - [ ] Enable Twilio for real SMS (pending credentials)
 - [ ] Migrate APScheduler to Celery+Redis for production
 
 ### P2 (Future)
-- [ ] Client self-service portal (confirm/reschedule via link)
 - [ ] Migrate MongoDB to PostgreSQL
-- [ ] Refactor server.py into modular route files
 - [ ] Multi-shop support
-
-## Key API Endpoints (New)
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| /api/payments/create-deposit/{id} | POST | Create Stripe checkout for appointment deposit |
-| /api/payments/status/{session_id} | GET | Poll Stripe payment status |
-| /api/payments/transactions | GET | List all payment transactions |
-| /api/webhooks/stripe | POST | Stripe webhook handler |
-| /api/oauth/calendar/login | GET | Initiate Google Calendar OAuth |
-| /api/oauth/calendar/callback | GET | Handle OAuth callback |
-| /api/calendar/status | GET | Check calendar connection |
-| /api/calendar/disconnect | POST | Disconnect calendar |
-| /api/calendar/events | GET | List calendar events |
 
 ## Credentials
 - **Admin**: username=admin, password=admin123
