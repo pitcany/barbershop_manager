@@ -49,6 +49,7 @@ from revenue_logger import (
     log_no_show_fee_on_payment_success,
     log_waitlist_fill_on_booking_success
 )
+from scheduling import create_scheduling_engine, SchedulingEngine
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
