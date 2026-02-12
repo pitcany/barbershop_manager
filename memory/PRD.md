@@ -1,107 +1,61 @@
 # Barbershop Autopilot - Product Requirements Document
 
 ## Original Problem Statement
-Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and recover lost revenue for a single barbershop. The system must handle inbound SMS, manage booking/rescheduling, enforce deposits/confirmations, fill cancellations from waitlist, and quantify recovered revenue.
+Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and recover lost revenue for a single barbershop. The system handles inbound SMS, booking/rescheduling, deposits/confirmations, cancellation filling from waitlist, and revenue tracking.
 
-## User Choices
-- **SMS Integration**: Simulation mode (TWILIO_ENABLED=false) — awaiting user credentials
-- **Payments**: Stripe test mode with mock fallback (STRIPE_ENABLED=false)
-- **Calendar**: Mock provider (CALENDAR_ENABLED=false)
-- **Email**: SendGrid configured (API key expired — user needs to provide new key)
-- **Database**: MongoDB (deviation from original PostgreSQL requirement)
-- **Authentication**: JWT-based with bcrypt password hashing
-- **Background Tasks**: APScheduler (in-process, no Redis needed)
-
-## Architecture Overview
-
-### Backend
-- **Framework**: FastAPI (Python 3.11+)
-- **Database**: MongoDB with Motor async driver
-- **Authentication**: JWT tokens with bcrypt password hashing (passlib)
-- **Scheduler**: APScheduler (AsyncIOScheduler) for background tasks
-
-### Frontend
-- **Framework**: React with Tailwind CSS
-- **Components**: Shadcn/UI
-- **Charts**: Recharts
-
-### Provider Abstraction Layer
-All external services behind interfaces:
-- SMSProvider → TwilioSMSProvider or MockSMSProvider
-- CalendarProvider → GoogleCalendarProvider or MockCalendarProvider
-- EmailProvider → SendGridEmailProvider or MockEmailProvider
-- PaymentProvider → StripePaymentProvider or MockPaymentProvider
-
-### Agent System
-- **FrontDeskAgent**: Handles inbound SMS, booking logic, template responses
-- **NoShowEnforcementAgent**: Deposit requests, no-show detection
-- **WaitlistFillAgent**: Finds matches and contacts waitlist clients
-- **OwnerOpsAgent**: Daily summary emails to shop owner
+## Architecture
+- **Backend**: FastAPI + MongoDB + APScheduler
+- **Frontend**: React + Tailwind + Shadcn/UI + Recharts
+- **Auth**: JWT + bcrypt
+- **External Services**: Provider abstraction (real/mock) for Twilio, Stripe, SendGrid, Google Calendar
 
 ## What's Been Implemented
 
-### Phase 1: MVP Core (Feb 6, 2026)
-- [x] Database models and provider abstraction layer
-- [x] Agent logic (FrontDeskAgent, NoShowEnforcementAgent, WaitlistFillAgent)
-- [x] Admin authentication (JWT + bcrypt)
-- [x] Dashboard, Conversations, Appointments, Waitlist, Settings pages
-- [x] SMS consent form, Twilio/Stripe webhooks
+### Phase 1: MVP Core (Feb 6)
+- [x] All database models + provider abstraction layer
+- [x] Agent system (FrontDeskAgent, NoShowEnforcementAgent, WaitlistFillAgent)
+- [x] Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
 - [x] SMS compliance, audit logging, revenue recovery tracking
+- [x] SendGrid email integration, Twilio/Stripe webhooks
 
-### Phase 2: High-Impact Enhancements (Feb 12, 2026)
+### Phase 2: High-Impact Enhancements (Feb 12)
 - [x] Scheduling Engine with conflict prevention
 - [x] Client Management Dashboard (search, create, history)
 - [x] Real-Time Conversations with live polling
-- [x] Appointment Booking with slot selection
+- [x] Client Detail page with appointment booking
 
-### Phase 3: Background Tasks & OwnerOpsAgent (Feb 12, 2026)
-- [x] APScheduler integration (starts on FastAPI startup)
-- [x] Automated appointment reminders (hourly)
-- [x] OwnerOpsAgent with daily summary email (20:00 UTC)
-- [x] Manual trigger endpoints for testing
-- [x] Scheduler status endpoint
-- [x] Stats compilation: appointments, no-shows, revenue, waitlist, messages, clients
+### Phase 3: Background Tasks & OwnerOpsAgent (Feb 12)
+- [x] APScheduler: hourly reminders + daily 20:00 UTC summary
+- [x] OwnerOpsAgent: compiles stats, sends HTML email to shop owner
+- [x] Manual trigger + preview endpoints for both jobs
 
-## Background Jobs
-
-| Job | Schedule | Endpoint |
-|-----|----------|----------|
-| Appointment Reminders | Every hour | POST /api/jobs/reminders/run |
-| Daily Summary Email | Daily 20:00 UTC | POST /api/jobs/daily-summary/run |
-| Scheduler Status | — | GET /api/jobs/status |
+### Phase 4: Dashboards (Feb 12)
+- [x] Reporting Dashboard: KPI cards, appointment trend chart, status pie, revenue line, barber performance, message activity, recovery events, period selector
+- [x] Jobs Dashboard: scheduler status, job cards with Run Now/Preview, execution history
 
 ## Mocked Integrations
-- **Twilio SMS**: MOCKED (TWILIO_ENABLED=false) — awaiting credentials
-- **Stripe Payments**: MOCKED (STRIPE_ENABLED=false)
-- **Google Calendar**: MOCKED (CALENDAR_ENABLED=false)
-- **SendGrid Email**: Real provider but API key expired (401)
+- Twilio SMS (TWILIO_ENABLED=false) — awaiting credentials
+- Stripe Payments (STRIPE_ENABLED=false)
+- Google Calendar (CALENDAR_ENABLED=false)
+- SendGrid: real provider, trial expired (401)
 
 ## Prioritized Backlog
 
-### P0 (Completed)
-- [x] Core MVP features
-- [x] Scheduling Engine with conflict prevention
-- [x] Client Management Dashboard
-- [x] Real-Time Conversation View
-- [x] APScheduler background tasks
-- [x] OwnerOpsAgent daily summary emails
-
-### P1 (Important - Next)
-- [ ] Enable Twilio for real SMS (pending user credentials)
-- [ ] Fix SendGrid API key (expired — user needs to provide new key)
-- [ ] Build Reporting Dashboard for recovered revenue events
+### P1 (Next)
+- [ ] Enable Twilio for real SMS (pending credentials)
+- [ ] Fix SendGrid (trial expired — user to upgrade plan)
+- [ ] RetentionRebookAgent implementation
 
 ### P2 (Nice to Have)
-- [ ] RetentionRebookAgent implementation
 - [ ] Real Stripe integration for deposits/no-show fees
 - [ ] Real Google Calendar integration
 
 ### P3 (Future)
-- [ ] Migrate from MongoDB to PostgreSQL
-- [ ] Multi-shop support
-- [ ] Client portal for self-service
+- [ ] Migrate MongoDB to PostgreSQL
 - [ ] Refactor server.py into modular route files
+- [ ] Multi-shop support, client portal
 
 ## Credentials
-- **Admin Login**: username=admin, password=admin123
-- **Preview URL**: https://waitlist-hero.preview.emergentagent.com
+- **Admin**: username=admin, password=admin123
+- **Preview**: https://waitlist-hero.preview.emergentagent.com
+- **Shop owner email**: yannik@pitcananalytics.com
