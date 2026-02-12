@@ -136,6 +136,34 @@ export default function DashboardPage() {
           ))}
         </div>
 
+        {/* Booking Link Quick Action */}
+        <Card className="bg-card border-border">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Link2 className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <p className="text-sm font-medium">Online Booking Link</p>
+                  <code className="text-xs text-muted-foreground font-mono">{window.location.origin}/book</code>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="dashboard-copy-booking-link"
+                className="gap-2"
+                onClick={() => {
+                  navigator.clipboard.writeText(`${window.location.origin}/book`)
+                    .then(() => toast.success("Booking link copied!"))
+                    .catch(() => toast.error("Failed to copy"));
+                }}
+              >
+                <Copy className="w-3.5 h-3.5" /> Copy Link
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Today's Schedule */}
         <Card className="bg-card border-border">
           <CardHeader>
