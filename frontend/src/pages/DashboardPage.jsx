@@ -4,6 +4,8 @@ import { API } from "../App";
 import Layout from "../components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { toast } from "sonner";
 import { 
   Calendar, 
   DollarSign, 
@@ -14,7 +16,9 @@ import {
   AlertTriangle,
   Clock,
   User,
-  Scissors
+  Scissors,
+  Link2,
+  Copy
 } from "lucide-react";
 import { 
   ResponsiveContainer,
