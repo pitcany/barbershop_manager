@@ -1680,6 +1680,9 @@ async def list_calendar_events(shop: Shop = Depends(get_shop)):
         logger.error(f"Failed to list calendar events: {e}")
         return {"events": [], "source": "error", "error": str(e)}
 
+
+# ==================== PUBLIC ENDPOINTS (NO AUTH) ====================
+
 @api_router.post("/public/sms-consent")
 async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
     """Public endpoint for SMS consent form (compliance-compliant)"""
