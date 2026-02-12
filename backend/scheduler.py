@@ -47,6 +47,16 @@ async def _run_daily_summary(db):
         logger.error(f"[SCHEDULER] Daily summary failed: {e}")
 
 
+async def _run_retention(db):
+    """Task: run retention sweep for lapsed clients."""
+    from retention_rebook_agent import run_retention_for_all_shops
+    try:
+        results = await run_retention_for_all_shops(db)
+        logger.info(f"[SCHEDULER] Retention sweep results: {results}")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] Retention sweep failed: {e}")
+
+
 def start_scheduler(db):
     """
     Start the background scheduler with all periodic tasks.
@@ -80,9 +90,20 @@ def start_scheduler(db):
         replace_existing=True,
     )
 
+    # --- Retention Sweep: daily at 14:00 UTC ---
+    retention_hour = int(os.environ.get("RETENTION_SWEEP_HOUR", "14"))
+    scheduler.add_job(
+        _run_retention,
+        trigger=CronTrigger(hour=retention_hour, minute=0),
+        args=[db],
+        id="retention_sweep",
+        name="Client Retention Sweep",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
-        f"[SCHEDULER] Started — reminders every 1h, daily summary at {summary_hour}:00 UTC"
+        f"[SCHEDULER] Started — reminders every 1h, daily summary at {summary_hour}:00, retention at {retention_hour}:00 UTC"
     )
     return scheduler
 
