@@ -102,6 +102,20 @@ export default function AppointmentsPage() {
     }
   };
 
+  const initiateDeposit = async (appointmentId) => {
+    try {
+      const res = await axios.post(`${API}/payments/create-deposit/${appointmentId}`, null, {
+        headers: { "x-origin": window.location.origin }
+      });
+      if (res.data.checkout_url) {
+        window.open(res.data.checkout_url, "_blank");
+        toast.success("Stripe checkout opened in new tab");
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to create deposit link");
+    }
+  };
+
   const formatDateTime = (dateString) => {
     const date = new Date(dateString);
     return {
