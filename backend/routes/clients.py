@@ -7,7 +7,7 @@ import re
 import logging
 import asyncio
 
-from deps import db, get_shop, get_current_user
+from deps import db, get_shop, get_current_user, batch_fetch_map
 from models import Shop, CreateClientRequest, UpdateClientRequest, CreateWaitlistRequest
 
 logger = logging.getLogger(__name__)
@@ -123,14 +123,11 @@ async def get_client_history(client_id: str, shop: Shop = Depends(get_shop)):
     ).sort("scheduled_at", -1).limit(50).to_list(50)
 
     # Batch fetch barbers and services to avoid N+1
-    barber_ids = list({apt.get("barber_id") for apt in appointments if apt.get("barber_id")})
-    service_ids = list({apt.get("service_id") for apt in appointments if apt.get("service_id")})
+    barber_ids = [apt.get("barber_id") for apt in appointments if apt.get("barber_id")]
+    service_ids = [apt.get("service_id") for apt in appointments if apt.get("service_id")]
 
-    barbers_list = await db.barbers.find({"id": {"$in": barber_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(barber_ids)) if barber_ids else []
-    services_list = await db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1, "price": 1}).to_list(len(service_ids)) if service_ids else []
-
-    barbers_map = {b["id"]: b for b in barbers_list}
-    services_map = {s["id"]: s for s in services_list}
+    barbers_map = await batch_fetch_map(db.barbers, barber_ids, {"id": 1, "name": 1})
+    services_map = await batch_fetch_map(db.services, service_ids, {"id": 1, "name": 1, "price": 1})
 
     for apt in appointments:
         barber = barbers_map.get(apt.get("barber_id"))
@@ -233,8 +230,7 @@ async def list_conversations(shop: Shop = Depends(get_shop), limit: int = 50):
 
     # Batch fetch clients to avoid N+1
     client_ids = [c["_id"] for c in convos]
-    clients_list = await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(len(client_ids)) if client_ids else []
-    clients_map = {c["id"]: c for c in clients_list}
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1})
 
     # Batch count unread messages
     unread_pipeline = [
@@ -314,16 +310,18 @@ async def get_live_activity(
         {"shop_id": shop.id, "created_at": {"$gte": cutoff}}, {"_id": 0}
     ).sort("created_at", -1).limit(20).to_list(20)
 
-    for msg in recent_messages:
-        client = await db.clients.find_one({"id": msg.get("client_id")}, {"_id": 0, "name": 1})
-        msg["client_name"] = client["name"] if client else "Unknown"
-
     recent_appointments = await db.appointments.find(
         {"shop_id": shop.id, "updated_at": {"$gte": cutoff}}, {"_id": 0, "id": 1, "status": 1, "client_id": 1, "updated_at": 1}
     ).sort("updated_at", -1).limit(10).to_list(10)
 
+    all_client_ids = ([msg.get("client_id") for msg in recent_messages if msg.get("client_id")] +
+                      [apt.get("client_id") for apt in recent_appointments if apt.get("client_id")])
+    clients_map = await batch_fetch_map(db.clients, all_client_ids, {"id": 1, "name": 1})
+    for msg in recent_messages:
+        client = clients_map.get(msg.get("client_id"))
+        msg["client_name"] = client["name"] if client else "Unknown"
     for apt in recent_appointments:
-        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1})
+        client = clients_map.get(apt.get("client_id"))
         apt["client_name"] = client["name"] if client else "Unknown"
 
     return {"recent_messages": recent_messages, "recent_appointments": recent_appointments}
@@ -336,19 +334,18 @@ async def list_waitlist(shop: Shop = Depends(get_shop)):
     entries = await db.waitlist.find({"shop_id": shop.id, "active": True}, {"_id": 0}).sort("created_at", -1).to_list(100)
 
     # Batch fetch clients and services to avoid N+1
-    client_ids = list({entry.get("client_id") for entry in entries if entry.get("client_id")})
-    service_ids = list({entry.get("service_id") for entry in entries if entry.get("service_id")})
+    client_ids = [entry.get("client_id") for entry in entries if entry.get("client_id")]
+    service_ids = [entry.get("service_id") for entry in entries if entry.get("service_id")]
 
-    clients_list = await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(len(client_ids)) if client_ids else []
-    services_list = await db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(service_ids)) if service_ids else []
-
-    clients_map = {c["id"]: {"name": c.get("name", "Unknown"), "phone": c.get("phone", "")} for c in clients_list}
-    services_map = {s["id"]: {"name": s.get("name", "Unknown")} for s in services_list}
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1})
+    services_map = await batch_fetch_map(db.services, service_ids, {"id": 1, "name": 1})
 
     for entry in entries:
-        entry["client"] = clients_map.get(entry.get("client_id"), {"name": "Unknown", "phone": ""})
+        c = clients_map.get(entry.get("client_id"))
+        entry["client"] = {"name": c.get("name", "Unknown"), "phone": c.get("phone", "")} if c else {"name": "Unknown", "phone": ""}
         if entry.get("service_id"):
-            entry["service"] = services_map.get(entry["service_id"], {"name": "Unknown"})
+            s = services_map.get(entry["service_id"])
+            entry["service"] = {"name": s.get("name", "Unknown")} if s else {"name": "Unknown"}
 
     return {"waitlist": entries, "total": len(entries)}
 

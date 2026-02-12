@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 import logging
 
-from deps import db, get_shop, get_current_user
+from deps import db, get_shop, get_current_user, batch_fetch_map
 from models import Shop
 from scheduler import get_job_status
 from owner_ops_agent import OwnerOpsAgent
@@ -35,10 +35,13 @@ async def preview_reminders(shop: Shop = Depends(get_shop)):
         {"_id": 0},
     ).to_list(50)
 
+    client_ids = [apt.get("client_id") for apt in upcoming if apt.get("client_id")]
+    barber_ids = [apt.get("barber_id") for apt in upcoming if apt.get("barber_id")]
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1, "sms_consent": 1})
+    barbers_map = await batch_fetch_map(db.barbers, barber_ids, {"id": 1, "name": 1})
     for apt in upcoming:
-        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1, "phone": 1, "sms_consent": 1})
-        apt["client"] = client or {"name": "Unknown"}
-        barber = await db.barbers.find_one({"id": apt.get("barber_id")}, {"_id": 0, "name": 1})
+        apt["client"] = clients_map.get(apt.get("client_id")) or {"name": "Unknown"}
+        barber = barbers_map.get(apt.get("barber_id"))
         apt["barber_name"] = barber["name"] if barber else "Unknown"
 
     return {"preview": upcoming, "window": {"start": window_start, "end": window_end}}
@@ -162,8 +165,10 @@ async def reporting_overview(days: int = 30, shop: Shop = Depends(get_shop)):
         }},
     ]
     barber_stats = await db.appointments.aggregate(barber_pipeline).to_list(20)
+    barber_ids = [bs["_id"] for bs in barber_stats]
+    barbers_map = await batch_fetch_map(db.barbers, barber_ids, {"id": 1, "name": 1})
     for bs in barber_stats:
-        barber = await db.barbers.find_one({"id": bs["_id"]}, {"_id": 0, "name": 1})
+        barber = barbers_map.get(bs["_id"])
         bs["name"] = barber["name"] if barber else bs["_id"]
         del bs["_id"]
 

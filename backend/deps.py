@@ -107,3 +107,36 @@ def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
             _rate_limit_windows.pop(k, None)
 
     return True
+
+
+# ==================== QUERY UTILITIES ====================
+
+async def batch_fetch_map(
+    collection,
+    ids: list,
+    projection: dict | None = None,
+    id_field: str = "id",
+) -> dict:
+    """Batch-fetch documents by ID list, return {id: doc} map.
+
+    Eliminates N+1 query patterns by replacing N individual find_one()
+    calls with a single $in query.
+
+    Args:
+        collection: Motor collection to query.
+        ids: List of document IDs to fetch.
+        projection: Optional field projection (e.g. {"name": 1, "phone": 1}).
+                    Always excludes _id automatically.
+        id_field: The field name used as the document identifier (default "id").
+
+    Returns:
+        Dict mapping id -> document for all found documents.
+    """
+    if not ids:
+        return {}
+    unique_ids = list(set(ids))
+    proj = {"_id": 0, **(projection or {})}
+    docs = await collection.find(
+        {id_field: {"$in": unique_ids}}, proj
+    ).to_list(len(unique_ids))
+    return {doc[id_field]: doc for doc in docs}

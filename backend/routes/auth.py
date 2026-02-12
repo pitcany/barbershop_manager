@@ -6,7 +6,7 @@ import os
 import asyncio
 from html import escape
 
-from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit
+from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit, batch_fetch_map
 from models import Shop, LoginRequest, TokenResponse, PolicyUpdate
 
 router = APIRouter()
@@ -96,9 +96,10 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
         {"_id": 0}
     ).sort("scheduled_at", 1).limit(5).to_list(5)
 
+    client_ids = [apt.get("client_id") for apt in upcoming if apt.get("client_id")]
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1})
     for apt in upcoming:
-        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1, "phone": 1})
-        apt["client"] = client or {"name": "Unknown", "phone": ""}
+        apt["client"] = clients_map.get(apt.get("client_id"), {"name": "Unknown", "phone": ""})
 
     # Recent events
     recent_events = await db.events.find(

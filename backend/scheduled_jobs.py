@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from models import Shop, Client, Appointment, AppointmentStatus, MessageDirection
 from audit import create_audit_logger
 from sms_compliance import create_sms_service
+from deps import batch_fetch_map
 
 logger = logging.getLogger(__name__)
 
@@ -151,17 +152,13 @@ class AppointmentReminderJob:
         appointments = await self.get_appointments_needing_reminder()
 
         # Pre-fetch all clients, barbers, services needed for reminders
-        client_ids = list({apt["client_id"] for apt in appointments if apt.get("client_id")})
-        barber_ids = list({apt["barber_id"] for apt in appointments if apt.get("barber_id")})
-        service_ids = list({apt["service_id"] for apt in appointments if apt.get("service_id")})
+        client_ids = [apt["client_id"] for apt in appointments if apt.get("client_id")]
+        barber_ids = [apt["barber_id"] for apt in appointments if apt.get("barber_id")]
+        service_ids = [apt["service_id"] for apt in appointments if apt.get("service_id")]
 
-        clients_list = await self.db.clients.find({"id": {"$in": client_ids}}, {"_id": 0}).to_list(len(client_ids)) if client_ids else []
-        barbers_list = await self.db.barbers.find({"id": {"$in": barber_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(barber_ids)) if barber_ids else []
-        services_list = await self.db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(service_ids)) if service_ids else []
-
-        clients_map = {c["id"]: c for c in clients_list}
-        barbers_map = {b["id"]: b for b in barbers_list}
-        services_map = {s["id"]: s for s in services_list}
+        clients_map = await batch_fetch_map(self.db.clients, client_ids)
+        barbers_map = await batch_fetch_map(self.db.barbers, barber_ids, {"id": 1, "name": 1})
+        services_map = await batch_fetch_map(self.db.services, service_ids, {"id": 1, "name": 1})
 
         results = {
             "total_found": len(appointments),

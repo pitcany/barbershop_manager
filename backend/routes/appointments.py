@@ -5,7 +5,7 @@ from typing import Optional
 import uuid
 import logging
 
-from deps import db, get_shop, get_current_user
+from deps import db, get_shop, get_current_user, batch_fetch_map
 from models import Shop, AppointmentStatus, CreateAppointmentRequest
 from providers import get_calendar
 from providers.interfaces import CalendarEvent
@@ -57,22 +57,21 @@ async def list_appointments(
     total = facet["total"][0]["count"] if facet.get("total") else 0
 
     # Batch fetch related entities to avoid N+1
-    client_ids = list({apt.get("client_id") for apt in appointments if apt.get("client_id")})
-    barber_ids = list({apt.get("barber_id") for apt in appointments if apt.get("barber_id")})
-    service_ids = list({apt.get("service_id") for apt in appointments if apt.get("service_id")})
+    client_ids = [apt.get("client_id") for apt in appointments if apt.get("client_id")]
+    barber_ids = [apt.get("barber_id") for apt in appointments if apt.get("barber_id")]
+    service_ids = [apt.get("service_id") for apt in appointments if apt.get("service_id")]
 
-    clients_list = await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1, "email": 1}).to_list(len(client_ids)) if client_ids else []
-    barbers_list = await db.barbers.find({"id": {"$in": barber_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(barber_ids)) if barber_ids else []
-    services_list = await db.services.find({"id": {"$in": service_ids}}, {"_id": 0, "id": 1, "name": 1, "price": 1}).to_list(len(service_ids)) if service_ids else []
-
-    clients_map = {c["id"]: {"name": c.get("name", "Unknown"), "phone": c.get("phone", ""), "email": c.get("email", "")} for c in clients_list}
-    barbers_map = {b["id"]: {"name": b.get("name", "Unknown")} for b in barbers_list}
-    services_map = {s["id"]: {"name": s.get("name", "Unknown"), "price": s.get("price", 0)} for s in services_list}
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1, "email": 1})
+    barbers_map = await batch_fetch_map(db.barbers, barber_ids, {"id": 1, "name": 1})
+    services_map = await batch_fetch_map(db.services, service_ids, {"id": 1, "name": 1, "price": 1})
 
     for apt in appointments:
-        apt["client"] = clients_map.get(apt.get("client_id"), {"name": "Unknown", "phone": ""})
-        apt["barber"] = barbers_map.get(apt.get("barber_id"), {"name": "Unknown"})
-        apt["service"] = services_map.get(apt.get("service_id"), {"name": "Unknown", "price": 0})
+        c = clients_map.get(apt.get("client_id"))
+        apt["client"] = {"name": c.get("name", "Unknown"), "phone": c.get("phone", ""), "email": c.get("email", "")} if c else {"name": "Unknown", "phone": ""}
+        b = barbers_map.get(apt.get("barber_id"))
+        apt["barber"] = {"name": b.get("name", "Unknown")} if b else {"name": "Unknown"}
+        s = services_map.get(apt.get("service_id"))
+        apt["service"] = {"name": s.get("name", "Unknown"), "price": s.get("price", 0)} if s else {"name": "Unknown", "price": 0}
 
     return {"appointments": appointments, "total": total}
 
@@ -212,10 +211,14 @@ async def get_barber_schedule(
         {"_id": 0}
     ).sort("scheduled_at", 1).to_list(100)
 
+    client_ids = [apt.get("client_id") for apt in appointments if apt.get("client_id")]
+    service_ids = [apt.get("service_id") for apt in appointments if apt.get("service_id")]
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1})
+    services_map = await batch_fetch_map(db.services, service_ids, {"id": 1, "name": 1})
     for apt in appointments:
-        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1})
+        client = clients_map.get(apt.get("client_id"))
         apt["client_name"] = client["name"] if client else "Unknown"
-        service = await db.services.find_one({"id": apt.get("service_id")}, {"_id": 0, "name": 1})
+        service = services_map.get(apt.get("service_id"))
         apt["service_name"] = service["name"] if service else "Unknown"
 
     return {"barber": barber, "available_slots": all_slots, "booked_appointments": appointments}
