@@ -3,11 +3,12 @@ import axios from "axios";
 import { API } from "../App";
 import Layout from "../components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { 
-  Calendar, 
-  DollarSign, 
-  Users, 
-  MessageSquare, 
+import { toast } from "sonner";
+import {
+  Calendar,
+  DollarSign,
+  Users,
+  MessageSquare,
   TrendingUp,
   TrendingDown,
   AlertTriangle,
@@ -60,6 +61,7 @@ export default function DashboardPage() {
       setChartData(fillDateGaps(chartRes.data.data, 14));
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error);
+      toast.error("Failed to load dashboard data");
     } finally {
       setLoading(false);
     }
