@@ -14,9 +14,9 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 /app/backend/
   server.py          # Slim entry point: app, CORS, startup, seed
   deps.py            # Shared: db, auth, rate limiting
-  models.py          # Pydantic models (incl. barber/service CRUD models)
+  models.py          # Pydantic models
   routes/
-    auth.py          # Auth, shop, dashboard, barbers CRUD, services CRUD, today-schedule
+    auth.py          # Auth, shop details CRUD, dashboard, barbers CRUD, services CRUD, today-schedule
     appointments.py  # Appointment CRUD, scheduling, availability
     clients.py       # Clients, conversations, waitlist
     payments.py      # Stripe payments
@@ -29,12 +29,14 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
   scheduler.py       # APScheduler config
 /app/frontend/src/
   pages/
-    DashboardPage.jsx          # Dashboard with Today's Schedule
+    DashboardPage.jsx          # Dashboard with Today's Schedule + Booking Link
     AppointmentsPage.jsx       # Appointments list + New Appointment modal
     ManagePage.jsx             # Barber & Service CRUD management
+    SettingsPage.jsx           # Editable shop details, policies, booking link, integrations
+    ClientsPage.jsx            # Client list (no MongoDB IDs)
     BookingPage.jsx            # Public self-service booking wizard
     BookingConfirmationPage.jsx
-    + existing admin pages...
+    + other admin pages...
   components/layout/Layout.jsx  # Sidebar navigation
 ```
 
@@ -46,28 +48,29 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 - Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
 - SMS compliance, audit logging, revenue recovery tracking
 - Scheduling Engine with conflict prevention
-- Client Management Dashboard
-- APScheduler background jobs
-- Reporting + Jobs dashboards
+- Client Management Dashboard, APScheduler background jobs, Reporting + Jobs dashboards
 
 ### Phase 6: Stripe & Google Calendar Integrations
-- **Stripe Payments (REAL)**: Checkout sessions, payment_transactions, status polling, webhook handler
-- **Google Calendar (REAL OAuth2)**: OAuth flow, token storage/refresh, event CRUD, freebusy
+- **Stripe Payments (REAL)**: Checkout sessions, transactions, status polling, webhook
+- **Google Calendar (REAL OAuth2)**: OAuth flow, token storage/refresh, event CRUD
 
 ### Phase 7: server.py Refactor
 - Decomposed 2,555-line monolith into 8 route modules + shared deps.py
 
 ### Phase 8: Client Self-Service Booking Portal
-- Public booking wizard at `/book`
-- Smart deposit enforcement, Stripe checkout, client creation, calendar sync, rate limiting
+- Public booking wizard at `/book`, smart deposit enforcement, Stripe checkout, calendar sync
 
-### Phase 9: Manager Workflow Fixes (Feb 12, 2026) — JUST COMPLETED
-- **"New Appointment" button** on Appointments page — dialog modal with client search, barber/service/date/time selection
-- **Barber & Service Management page** at `/manage` — full CRUD (add/edit/delete) with tabs
-- **"Today's Schedule" view** on Dashboard — timeline of day's appointments with time, client, service, barber, status
-- **Backend CRUD endpoints**: POST/PATCH/DELETE for barbers and services
-- **Navigation update**: Added "Manage Shop" to sidebar, reordered nav items
-- 100% test pass rate (26 backend + all frontend tests)
+### Phase 9: Manager Workflow P0 Fixes (Feb 12, 2026)
+- "New Appointment" button on Appointments page
+- Barber & Service Management page at `/manage` with full CRUD
+- "Today's Schedule" timeline on Dashboard
+- 100% test pass rate (26 backend + all frontend)
+
+### Phase 10: P1 Improvements (Feb 12, 2026) — JUST COMPLETED
+- **Editable shop details** in Settings (name, phone, email, address) via PATCH /api/shop/details
+- **Shareable booking link** in Settings + Dashboard with copy-to-clipboard
+- **Removed MongoDB IDs** from client list — shows appointment count instead
+- 100% test pass rate (11 backend + all frontend)
 
 ## Integration Status
 | Service | Status | Details |
@@ -80,9 +83,6 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 ## Prioritized Backlog
 
 ### P1 (Next)
-- [ ] Editable shop details (phone, email, address) in Settings page
-- [ ] Shareable booking link displayed in admin UI
-- [ ] Hide internal MongoDB IDs from client list
 - [ ] Enable Twilio for real SMS (pending credentials)
 - [ ] Migrate APScheduler to Celery+Redis for production
 - [ ] Billing infrastructure (Stripe Connect for platform fee on deposits)
