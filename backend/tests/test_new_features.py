@@ -7,7 +7,7 @@ import requests
 import os
 from datetime import datetime, timedelta
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://waitlist-hero.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://booking-recovery.preview.emergentagent.com').rstrip('/')
 
 class TestAuth:
     """Authentication endpoint tests"""

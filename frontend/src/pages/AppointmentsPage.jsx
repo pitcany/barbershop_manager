@@ -43,6 +43,7 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -238,6 +239,20 @@ export default function AppointmentsPage() {
   const getValidTargets = (currentStatus) => {
     const targets = allowedTransitions[currentStatus] || [];
     return targets.map((v) => ({ value: v, label: statusLabels[v] || v }));
+  };
+
+  const initiateDeposit = async (appointmentId) => {
+    try {
+      const res = await axios.post(`${API}/payments/create-deposit/${appointmentId}`, null, {
+        headers: { "x-origin": window.location.origin }
+      });
+      if (res.data.checkout_url) {
+        window.open(res.data.checkout_url, "_blank");
+        toast.success("Stripe checkout opened in new tab");
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to create deposit link");
+    }
   };
 
   const formatDateTime = (dateString) => {
@@ -471,25 +486,38 @@ export default function AppointmentsPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {validTargets.length > 0 ? (
-                            <Select
-                              value=""
-                              onValueChange={(value) => updateStatus(apt.id, value)}
-                            >
-                              <SelectTrigger className="w-36 h-8 text-xs" data-testid={`status-action-${apt.id}`}>
-                                <SelectValue placeholder="Change status" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {validTargets.map((option) => (
-                                  <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">No actions</span>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {(apt.status === "deposit_pending" || (apt.status === "pending" && apt.deposit_required && !apt.deposit_paid)) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-xs gap-1 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                                onClick={() => initiateDeposit(apt.id)}
+                                data-testid={`pay-deposit-btn-${apt.id}`}
+                              >
+                                <CreditCard className="w-3 h-3" /> Pay Deposit
+                              </Button>
+                            )}
+                            {validTargets.length > 0 ? (
+                              <Select
+                                value=""
+                                onValueChange={(value) => updateStatus(apt.id, value)}
+                              >
+                                <SelectTrigger className="w-36 h-8 text-xs" data-testid={`status-action-${apt.id}`}>
+                                  <SelectValue placeholder="Change status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {validTargets.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">No actions</span>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

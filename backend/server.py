@@ -53,6 +53,9 @@ from revenue_logger import (
     log_waitlist_fill_on_booking_success
 )
 from scheduling import create_scheduling_engine, SchedulingEngine
+from scheduler import start_scheduler, stop_scheduler, get_job_status
+from owner_ops_agent import OwnerOpsAgent
+from retention_rebook_agent import RetentionRebookAgent
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
@@ -481,6 +484,11 @@ async def update_appointment_status(
         if status == "cancelled":
             waitlist_agent = WaitlistFillAgent(db, shop)
             await waitlist_agent.process_cancellation(appointment_id)
+            # Delete Google Calendar event
+            gcal_event_id = appointment.get("gcal_event_id")
+            if gcal_event_id:
+                calendar = get_calendar(db)
+                await calendar.delete_event("primary", gcal_event_id)
         elif status == "no_show":
             noshow_agent = NoShowEnforcementAgent(db, shop)
             await noshow_agent.process_no_show(appointment_id)
@@ -718,6 +726,29 @@ async def create_appointment(
 
     await db.appointments.insert_one(appointment)
     appointment.pop("_id", None)
+
+    # Sync to Google Calendar
+    try:
+        calendar = get_calendar(db)
+        from providers.interfaces import CalendarEvent
+        barber_name = barber.get("name", "Unknown") if barber else "Unknown"
+        client_name = client.get("name", "Unknown") if client else "Unknown"
+        end_dt = scheduled_dt + timedelta(minutes=duration)
+        cal_event = CalendarEvent(
+            summary=f"{service.get('name', 'Appointment')} - {client_name}",
+            description=f"Barber: {barber_name}\nClient: {client_name}\nService: {service.get('name', '')}\nNotes: {body.notes or ''}",
+            start_time=scheduled_dt,
+            end_time=end_dt,
+        )
+        gcal_event_id = await calendar.create_event("primary", cal_event)
+        if gcal_event_id:
+            await db.appointments.update_one(
+                {"id": appointment_id},
+                {"$set": {"gcal_event_id": gcal_event_id}}
+            )
+            appointment["gcal_event_id"] = gcal_event_id
+    except Exception as e:
+        logger.error(f"Calendar sync failed: {e}")
 
     return appointment
 
@@ -1458,42 +1489,230 @@ async def stripe_webhook(request: Request):
         logger.error(f"Stripe webhook error: {result['error']}")
         return JSONResponse(content={"status": "error"}, status_code=400)
     
-    # Update payment status if we have a session_id
-    if "session_id" in result:
-        # Find the payment record
-        payment_record = await db.payments.find_one(
-            {"stripe_session_id": result["session_id"]},
-            {"_id": 0}
-        )
+    session_id = result.get("session_id")
+    payment_status = result.get("payment_status")
+    
+    if session_id and payment_status:
+        now_iso = datetime.now(timezone.utc).isoformat()
         
-        if payment_record and result.get("payment_status") == "paid":
-            # Update payment status
-            await db.payments.update_one(
-                {"stripe_session_id": result["session_id"]},
-                {"$set": {
-                    "status": "completed",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }}
+        if payment_status == "paid":
+            # Update payment_transactions (idempotent - only if not already paid)
+            txn_result = await db.payment_transactions.update_one(
+                {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                {"$set": {"payment_status": "paid", "status": "completed", "updated_at": now_iso}}
             )
             
-            # Hook: Log no-show fee revenue if applicable
-            if payment_record.get("appointment_id"):
-                appointment = await db.appointments.find_one(
-                    {"id": payment_record["appointment_id"]},
-                    {"_id": 0}
+            if txn_result.modified_count > 0:
+                # Update legacy payments
+                await db.payments.update_one(
+                    {"stripe_session_id": session_id},
+                    {"$set": {"status": "completed", "updated_at": now_iso}}
                 )
-                if appointment:
-                    await log_no_show_fee_on_payment_success(db, payment_record, appointment)
-        elif payment_record:
+                
+                # Find transaction to get appointment_id
+                txn = await db.payment_transactions.find_one(
+                    {"session_id": session_id}, {"_id": 0}
+                )
+                if txn and txn.get("appointment_id"):
+                    await db.appointments.update_one(
+                        {"id": txn["appointment_id"]},
+                        {"$set": {
+                            "deposit_paid": True,
+                            "status": AppointmentStatus.DEPOSIT_PAID.value,
+                            "updated_at": now_iso
+                        }}
+                    )
+                    
+                    payment_record = await db.payments.find_one(
+                        {"stripe_session_id": session_id}, {"_id": 0}
+                    )
+                    appointment = await db.appointments.find_one(
+                        {"id": txn["appointment_id"]}, {"_id": 0}
+                    )
+                    if payment_record and appointment:
+                        await log_no_show_fee_on_payment_success(db, payment_record, appointment)
+        
+        elif payment_status in ("unpaid", "no_payment_required"):
+            await db.payment_transactions.update_one(
+                {"session_id": session_id},
+                {"$set": {"payment_status": payment_status, "status": "failed", "updated_at": now_iso}}
+            )
             await db.payments.update_one(
-                {"stripe_session_id": result["session_id"]},
-                {"$set": {
-                    "status": "failed",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }}
+                {"stripe_session_id": session_id},
+                {"$set": {"status": "failed", "updated_at": now_iso}}
             )
     
     return JSONResponse(content={"status": "received"})
+
+
+# ==================== GOOGLE CALENDAR OAUTH ENDPOINTS ====================
+
+@api_router.get("/oauth/calendar/login")
+async def google_calendar_login(request: Request, shop: Shop = Depends(get_shop)):
+    """Initiate Google Calendar OAuth flow"""
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    if not client_id:
+        raise HTTPException(status_code=500, detail="Google Calendar not configured")
+    
+    origin = request.headers.get("x-origin", str(request.base_url).rstrip("/"))
+    redirect_uri = f"{origin}/api/oauth/calendar/callback"
+    
+    from google_auth_oauthlib.flow import Flow
+    flow = Flow.from_client_config(
+        {"web": {
+            "client_id": client_id,
+            "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token"
+        }},
+        scopes=["https://www.googleapis.com/auth/calendar"],
+        redirect_uri=redirect_uri
+    )
+    
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        prompt="consent"
+    )
+    
+    # Store state for CSRF protection
+    await db.oauth_states.insert_one({
+        "state": state,
+        "redirect_uri": redirect_uri,
+        "shop_id": shop.id,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    return {"authorization_url": auth_url}
+
+
+@api_router.get("/oauth/calendar/callback")
+async def google_calendar_callback(code: str, state: str = ""):
+    """Handle Google Calendar OAuth callback"""
+    import requests as http_requests
+    
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    
+    # Find stored state to get redirect_uri
+    state_doc = await db.oauth_states.find_one({"state": state}, {"_id": 0})
+    redirect_uri = state_doc["redirect_uri"] if state_doc else ""
+    
+    if not redirect_uri:
+        # Fallback - construct from the REACT_APP_BACKEND_URL concept
+        redirect_uri = f"{os.environ.get('REACT_APP_BACKEND_URL', '')}/api/oauth/calendar/callback"
+    
+    # Exchange code for tokens
+    token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code"
+    }).json()
+    
+    if "error" in token_resp:
+        logger.error(f"Google OAuth error: {token_resp}")
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/settings?calendar_error=auth_failed")
+    
+    # Get user email
+    user_info = http_requests.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {token_resp['access_token']}"}
+    ).json()
+    
+    email = user_info.get("email", "")
+    
+    # Store tokens
+    await db.google_calendar_tokens.update_one(
+        {},
+        {"$set": {
+            "access_token": token_resp["access_token"],
+            "refresh_token": token_resp.get("refresh_token"),
+            "token_type": token_resp.get("token_type"),
+            "expires_in": token_resp.get("expires_in"),
+            "email": email,
+            "connected_at": datetime.now(timezone.utc).isoformat()
+        }},
+        upsert=True
+    )
+    
+    # Reset calendar provider singleton so it picks up the new tokens
+    from providers import reset_providers
+    reset_providers()
+    
+    # Clean up state
+    if state_doc:
+        await db.oauth_states.delete_one({"state": state})
+    
+    logger.info(f"[GCAL] Google Calendar connected for {email}")
+    
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/settings?calendar_connected=true")
+
+
+@api_router.get("/calendar/status")
+async def get_calendar_status(shop: Shop = Depends(get_shop)):
+    """Check if Google Calendar is connected"""
+    tokens = await db.google_calendar_tokens.find_one({}, {"_id": 0})
+    
+    connected = bool(tokens and tokens.get("access_token"))
+    
+    return {
+        "connected": connected,
+        "email": tokens.get("email", "") if connected else "",
+        "connected_at": tokens.get("connected_at", "") if connected else ""
+    }
+
+
+@api_router.post("/calendar/disconnect")
+async def disconnect_calendar(shop: Shop = Depends(get_shop)):
+    """Disconnect Google Calendar"""
+    await db.google_calendar_tokens.delete_many({})
+    
+    from providers import reset_providers
+    reset_providers()
+    
+    return {"message": "Google Calendar disconnected"}
+
+
+@api_router.get("/calendar/events")
+async def list_calendar_events(shop: Shop = Depends(get_shop)):
+    """List upcoming calendar events"""
+    calendar = get_calendar(db)
+    
+    from providers.real_providers import GoogleCalendarProvider
+    if not isinstance(calendar, GoogleCalendarProvider):
+        return {"events": [], "source": "mock"}
+    
+    service = await calendar._get_service()
+    if not service:
+        return {"events": [], "source": "not_connected"}
+    
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        result = service.events().list(
+            calendarId="primary",
+            timeMin=now,
+            maxResults=20,
+            singleEvents=True,
+            orderBy="startTime"
+        ).execute()
+        
+        events = []
+        for e in result.get("items", []):
+            events.append({
+                "id": e["id"],
+                "summary": e.get("summary", ""),
+                "start": e.get("start", {}).get("dateTime", e.get("start", {}).get("date", "")),
+                "end": e.get("end", {}).get("dateTime", e.get("end", {}).get("date", "")),
+                "status": e.get("status", ""),
+            })
+        
+        return {"events": events, "source": "google"}
+    except Exception as e:
+        logger.error(f"Failed to list calendar events: {e}")
+        return {"events": [], "source": "error", "error": str(e)}
 
 
 # ==================== PUBLIC ENDPOINTS (NO AUTH) ====================
@@ -1559,7 +1778,207 @@ async def get_public_shop_info():
     return shop_data
 
 
-# ==================== MOCK PAYMENT ENDPOINT ====================
+# ==================== PAYMENT ENDPOINTS ====================
+
+@api_router.post("/payments/create-deposit/{appointment_id}")
+async def create_deposit_payment(
+    appointment_id: str,
+    request: Request,
+    shop: Shop = Depends(get_shop)
+):
+    """Create a Stripe checkout session for an appointment deposit"""
+    appointment = await db.appointments.find_one(
+        {"id": appointment_id, "shop_id": shop.id},
+        {"_id": 0}
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    
+    if appointment.get("status") not in ("deposit_pending", "pending"):
+        raise HTTPException(status_code=400, detail=f"Appointment status '{appointment.get('status')}' does not require a deposit")
+    
+    # Check if there's already a completed payment
+    existing = await db.payment_transactions.find_one(
+        {"appointment_id": appointment_id, "payment_status": "paid"},
+        {"_id": 0}
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="Deposit already paid for this appointment")
+    
+    # Amount comes from server-side (shop settings), NOT frontend
+    amount = float(shop.deposit_amount)
+    
+    client_data = await db.clients.find_one(
+        {"id": appointment["client_id"], "shop_id": shop.id},
+        {"_id": 0}
+    )
+    
+    # Build dynamic URLs from the request's origin
+    origin = request.headers.get("x-origin", str(request.base_url).rstrip("/"))
+    success_url = f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}&appointment_id={appointment_id}"
+    cancel_url = f"{origin}/payment/cancel?appointment_id={appointment_id}"
+    
+    metadata = {
+        "appointment_id": appointment_id,
+        "client_id": appointment["client_id"],
+        "shop_id": shop.id,
+        "type": "deposit"
+    }
+    
+    payment = get_payment()
+    payment_link = await payment.create_payment_link(
+        amount=amount,
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata
+    )
+    
+    # Update appointment status
+    await db.appointments.update_one(
+        {"id": appointment_id},
+        {"$set": {
+            "deposit_required": True,
+            "deposit_amount": amount,
+            "status": AppointmentStatus.DEPOSIT_PENDING.value,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    # Create payment_transactions record (MANDATORY per playbook)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "client_id": appointment["client_id"],
+        "client_name": client_data.get("name", "") if client_data else "",
+        "appointment_id": appointment_id,
+        "amount": amount,
+        "currency": "usd",
+        "session_id": payment_link.session_id,
+        "payment_status": "initiated",
+        "status": "pending",
+        "payment_type": "deposit",
+        "metadata": metadata,
+        "created_at": now_iso,
+        "updated_at": now_iso
+    })
+    
+    # Also create legacy payments record for backwards compat
+    await db.payments.insert_one({
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "client_id": appointment["client_id"],
+        "appointment_id": appointment_id,
+        "amount": amount,
+        "currency": "usd",
+        "stripe_session_id": payment_link.session_id,
+        "status": "pending",
+        "payment_type": "deposit",
+        "created_at": now_iso,
+        "updated_at": now_iso
+    })
+    
+    return {"checkout_url": payment_link.url, "session_id": payment_link.session_id}
+
+
+@api_router.get("/payments/status/{session_id}")
+async def get_payment_status(session_id: str, shop: Shop = Depends(get_shop)):
+    """Poll Stripe for checkout session status and update DB"""
+    # Check our records first
+    txn = await db.payment_transactions.find_one(
+        {"session_id": session_id, "shop_id": shop.id},
+        {"_id": 0}
+    )
+    if not txn:
+        raise HTTPException(status_code=404, detail="Payment transaction not found")
+    
+    # If already marked as paid, return immediately (idempotent)
+    if txn.get("payment_status") == "paid":
+        return {
+            "status": txn["status"],
+            "payment_status": "paid",
+            "amount": txn["amount"],
+            "appointment_id": txn.get("appointment_id")
+        }
+    
+    # Poll Stripe for latest status
+    payment = get_payment()
+    stripe_status = await payment.get_payment_status(session_id)
+    
+    now_iso = datetime.now(timezone.utc).isoformat()
+    
+    if stripe_status.payment_status == "paid":
+        # Update payment_transactions (only if not already processed)
+        result = await db.payment_transactions.update_one(
+            {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+            {"$set": {
+                "payment_status": "paid",
+                "status": "completed",
+                "updated_at": now_iso
+            }}
+        )
+        
+        if result.modified_count > 0:
+            # Update legacy payments record
+            await db.payments.update_one(
+                {"stripe_session_id": session_id},
+                {"$set": {"status": "completed", "updated_at": now_iso}}
+            )
+            
+            # Update appointment status
+            appointment_id = txn.get("appointment_id")
+            if appointment_id:
+                await db.appointments.update_one(
+                    {"id": appointment_id},
+                    {"$set": {
+                        "deposit_paid": True,
+                        "status": AppointmentStatus.DEPOSIT_PAID.value,
+                        "updated_at": now_iso
+                    }}
+                )
+                
+                # Log revenue
+                payment_record = await db.payments.find_one(
+                    {"stripe_session_id": session_id}, {"_id": 0}
+                )
+                appointment = await db.appointments.find_one(
+                    {"id": appointment_id}, {"_id": 0}
+                )
+                if payment_record and appointment:
+                    await log_no_show_fee_on_payment_success(db, payment_record, appointment)
+    
+    elif stripe_status.status == "expired":
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"payment_status": "expired", "status": "expired", "updated_at": now_iso}}
+        )
+        await db.payments.update_one(
+            {"stripe_session_id": session_id},
+            {"$set": {"status": "failed", "updated_at": now_iso}}
+        )
+    
+    return {
+        "status": stripe_status.status,
+        "payment_status": stripe_status.payment_status,
+        "amount": stripe_status.amount,
+        "appointment_id": txn.get("appointment_id")
+    }
+
+
+@api_router.get("/payments/transactions")
+async def list_payment_transactions(
+    shop: Shop = Depends(get_shop),
+    limit: int = 50,
+    skip: int = 0
+):
+    """List payment transactions"""
+    txns = await db.payment_transactions.find(
+        {"shop_id": shop.id}, {"_id": 0}
+    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.payment_transactions.count_documents({"shop_id": shop.id})
+    return {"transactions": txns, "total": total}
+
 
 @api_router.get("/mock-payment")
 async def mock_payment_page(session_id: str, shop: Shop = Depends(get_shop)):
@@ -1568,13 +1987,9 @@ async def mock_payment_page(session_id: str, shop: Shop = Depends(get_shop)):
     
     payment = get_payment()
     if isinstance(payment, MockPaymentProvider):
-        # Auto-complete the payment in mock mode
         await payment.complete_payment(session_id)
-        
-        # Get session info
         status = await payment.get_payment_status(session_id)
         
-        # If there's an appointment_id in metadata, update the appointment
         appointment_id = status.metadata.get("appointment_id")
         if appointment_id:
             await db.appointments.update_one(
@@ -1585,34 +2000,12 @@ async def mock_payment_page(session_id: str, shop: Shop = Depends(get_shop)):
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }}
             )
-            
-            # Update payment record
             await db.payments.update_one(
                 {"stripe_session_id": session_id},
-                {"$set": {
-                    "status": "completed",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }}
+                {"$set": {"status": "completed", "updated_at": datetime.now(timezone.utc).isoformat()}}
             )
-            
-            # Hook: Log no-show fee revenue if applicable
-            payment_record = await db.payments.find_one(
-                {"stripe_session_id": session_id},
-                {"_id": 0}
-            )
-            appointment = await db.appointments.find_one(
-                {"id": appointment_id},
-                {"_id": 0}
-            )
-            if payment_record and appointment:
-                await log_no_show_fee_on_payment_success(db, payment_record, appointment)
         
-        return {
-            "status": "success",
-            "message": "Mock payment completed",
-            "session_id": session_id,
-            "amount": status.amount
-        }
+        return {"status": "success", "message": "Mock payment completed", "session_id": session_id, "amount": status.amount}
     
     raise HTTPException(status_code=400, detail="Not in mock mode")
 
@@ -1667,6 +2060,68 @@ async def preview_reminders(shop: Shop = Depends(get_shop)):
         "appointments_needing_reminder": len(preview),
         "preview": preview
     }
+
+
+@api_router.post("/jobs/daily-summary/run")
+async def run_daily_summary(shop: Shop = Depends(get_shop)):
+    """
+    Manually trigger the daily summary email.
+    Useful for testing. Sends to the shop owner's configured email.
+    """
+    agent = OwnerOpsAgent(db, shop.model_dump())
+    result = await agent.send_daily_summary()
+    return result
+
+
+@api_router.get("/jobs/daily-summary/preview")
+async def preview_daily_summary(shop: Shop = Depends(get_shop)):
+    """
+    Preview the daily summary stats without sending the email.
+    """
+    agent = OwnerOpsAgent(db, shop.model_dump())
+    stats = await agent.compile_daily_stats()
+    return {"stats": stats, "shop_email": shop.email}
+
+
+@api_router.get("/jobs/status")
+async def scheduler_status(user: dict = Depends(get_current_user)):
+    """Get status of all scheduled background jobs."""
+    jobs = get_job_status()
+    return {"scheduler": "running", "jobs": jobs}
+
+
+@api_router.post("/jobs/retention/run")
+async def run_retention_sweep(shop: Shop = Depends(get_shop)):
+    """Manually trigger the retention rebook sweep."""
+    agent = RetentionRebookAgent(db, shop.model_dump())
+    result = await agent.run()
+    return result
+
+
+@api_router.get("/jobs/retention/preview")
+async def preview_retention(shop: Shop = Depends(get_shop)):
+    """Preview which clients are lapsed without sending any messages."""
+    agent = RetentionRebookAgent(db, shop.model_dump())
+    lapsed = await agent.find_lapsed_clients()
+    return {
+        "enabled": agent.enabled,
+        "lapse_threshold_weeks": agent.lapse_weeks,
+        "cooldown_days": agent.cooldown_days,
+        "lapsed_clients": len(lapsed),
+        "clients": lapsed,
+    }
+
+
+@api_router.get("/retention/outreach-history")
+async def retention_outreach_history(
+    limit: int = 50,
+    shop: Shop = Depends(get_shop)
+):
+    """Get history of retention outreach attempts."""
+    entries = await db.retention_outreach.find(
+        {"shop_id": shop.id}, {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"entries": entries, "count": len(entries)}
 
 
 # ==================== EMAIL OUTBOX ENDPOINT ====================
@@ -1735,6 +2190,121 @@ async def list_recovered_revenue_events(
     }
 
 
+# ==================== REPORTING ANALYTICS ====================
+
+@api_router.get("/reporting/overview")
+async def reporting_overview(
+    days: int = 30,
+    shop: Shop = Depends(get_shop)
+):
+    """
+    Comprehensive reporting dashboard data.
+    Aggregates appointments, revenue, no-shows, and activity over a period.
+    """
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=days)).isoformat()
+
+    # Appointment stats by status
+    apt_pipeline = [
+        {"$match": {"shop_id": shop.id, "scheduled_at": {"$gte": start}}},
+        {"$group": {"_id": "$status", "count": {"$sum": 1}, "revenue": {"$sum": "$price"}}}
+    ]
+    apt_stats = await db.appointments.aggregate(apt_pipeline).to_list(20)
+    by_status = {r["_id"]: {"count": r["count"], "revenue": r["revenue"]} for r in apt_stats}
+    total_apts = sum(r["count"] for r in apt_stats)
+
+    # Revenue recovered by source
+    rev_pipeline = [
+        {"$match": {"shop_id": shop.id, "attributed_at": {"$gte": start}}},
+        {"$group": {"_id": "$source", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}}
+    ]
+    rev_stats = await db.recovered_revenue_events.aggregate(rev_pipeline).to_list(20)
+    recovered_by_source = {r["_id"]: {"amount": r["total"], "count": r["count"]} for r in rev_stats}
+    total_recovered = sum(r["total"] for r in rev_stats)
+
+    # Daily appointment trend
+    daily_pipeline = [
+        {"$match": {"shop_id": shop.id, "scheduled_at": {"$gte": start}}},
+        {"$addFields": {"day": {"$substr": ["$scheduled_at", 0, 10]}}},
+        {"$group": {"_id": "$day", "total": {"$sum": 1},
+                     "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+                     "no_shows": {"$sum": {"$cond": [{"$eq": ["$status", "no_show"]}, 1, 0]}},
+                     "cancelled": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}},
+                     "revenue": {"$sum": "$price"}}},
+        {"$sort": {"_id": 1}}
+    ]
+    daily_trend = await db.appointments.aggregate(daily_pipeline).to_list(60)
+
+    # Recovered revenue events list
+    recovered_events = await db.recovered_revenue_events.find(
+        {"shop_id": shop.id, "attributed_at": {"$gte": start}}, {"_id": 0}
+    ).sort("attributed_at", -1).to_list(100)
+
+    # Barber performance
+    barber_pipeline = [
+        {"$match": {"shop_id": shop.id, "scheduled_at": {"$gte": start}}},
+        {"$group": {"_id": "$barber_id", "total": {"$sum": 1},
+                     "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+                     "no_shows": {"$sum": {"$cond": [{"$eq": ["$status", "no_show"]}, 1, 0]}},
+                     "revenue": {"$sum": "$price"}}}
+    ]
+    barber_stats = await db.appointments.aggregate(barber_pipeline).to_list(20)
+    # Enrich with barber names
+    for bs in barber_stats:
+        barber = await db.barbers.find_one({"id": bs["_id"]}, {"_id": 0, "name": 1})
+        bs["name"] = barber["name"] if barber else bs["_id"]
+        del bs["_id"]
+
+    # Message activity
+    msg_pipeline = [
+        {"$match": {"shop_id": shop.id, "created_at": {"$gte": start}}},
+        {"$group": {"_id": "$direction", "count": {"$sum": 1}}}
+    ]
+    msg_stats = await db.messages.aggregate(msg_pipeline).to_list(5)
+    messages = {r["_id"]: r["count"] for r in msg_stats}
+
+    # Audit log stats
+    audit_pipeline = [
+        {"$match": {"shop_id": shop.id, "created_at": {"$gte": start}}},
+        {"$group": {"_id": {"provider": "$provider", "success": "$success"}, "count": {"$sum": 1}}}
+    ]
+    audit_stats = await db.integration_audit_log.aggregate(audit_pipeline).to_list(50)
+
+    no_shows = by_status.get("no_show", {}).get("count", 0)
+
+    return {
+        "period_days": days,
+        "appointments": {
+            "total": total_apts,
+            "by_status": by_status,
+            "no_show_rate": round((no_shows / total_apts * 100) if total_apts > 0 else 0, 1),
+        },
+        "revenue": {
+            "total_earned": sum(r.get("revenue", 0) for r in apt_stats if r["_id"] == "completed"),
+            "total_recovered": total_recovered,
+            "recovered_by_source": recovered_by_source,
+        },
+        "daily_trend": [{"date": d["_id"], **{k: v for k, v in d.items() if k != "_id"}} for d in daily_trend],
+        "recovered_events": recovered_events,
+        "barber_performance": barber_stats,
+        "messages": messages,
+        "audit_summary": [{"provider": a["_id"]["provider"], "success": a["_id"]["success"], "count": a["count"]} for a in audit_stats],
+    }
+
+
+@api_router.get("/reporting/jobs-history")
+async def jobs_history(
+    limit: int = 50,
+    user: dict = Depends(get_current_user)
+):
+    """Get history of scheduled job executions from audit log."""
+    entries = await db.integration_audit_log.find(
+        {"action": {"$in": ["daily_summary_email", "appointment_reminder", "send_sms", "send_email"]}},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"entries": entries, "count": len(entries)}
+
+
 # ==================== HEALTH CHECK ====================
 
 @api_router.get("/")
@@ -1783,7 +2353,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database with seed data if empty"""
+    """Initialize database with seed data if empty, then start scheduler"""
     logger.info("Starting Barbershop Autopilot...")
 
     # Ensure TTL index for rate-limit entries (auto-cleanup)
@@ -1796,7 +2366,17 @@ async def startup_event():
         logger.info("Seeding demo data...")
         await seed_demo_data()
     
+    # Start background scheduler
+    start_scheduler(db)
+    
     logger.info("Barbershop Autopilot ready!")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop background scheduler on shutdown"""
+    stop_scheduler()
+    logger.info("Barbershop Autopilot stopped.")
 
 
 async def seed_demo_data():
@@ -1825,6 +2405,9 @@ async def seed_demo_data():
         "confirmation_window_hours": 24,
         "cancellation_window_hours": 4,
         "max_messages_per_day": 4,
+        "retention_enabled": True,
+        "retention_lapse_weeks": 4,
+        "retention_cooldown_days": 7,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }

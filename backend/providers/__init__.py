@@ -41,13 +41,25 @@ def get_sms_provider() -> SMSProvider:
     return MockSMSProvider()
 
 
-def get_calendar_provider() -> CalendarProvider:
-    """Get calendar provider based on credentials availability"""
-    creds_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+def get_calendar_provider(db=None) -> CalendarProvider:
+    """Get calendar provider based on CALENDAR_ENABLED flag and OAuth credentials"""
+    calendar_enabled = _is_true(os.environ.get("CALENDAR_ENABLED"))
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
     
-    if creds_path and os.path.exists(creds_path):
-        logger.info("Using Google Calendar provider")
-        return GoogleCalendarProvider()
+    # Check for OAuth credentials
+    if calendar_enabled and client_id and client_secret:
+        logger.info("Using Google Calendar provider (OAuth2)")
+        return GoogleCalendarProvider(db=db)
+    
+    # Fall back to service account if available
+    creds_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if calendar_enabled and creds_path and os.path.exists(creds_path):
+        logger.info("Using Google Calendar provider (Service Account)")
+        return GoogleCalendarProvider(db=db)
+    
+    if calendar_enabled:
+        logger.warning("CALENDAR_ENABLED=true but no credentials found, falling back to mock")
     
     logger.info("Using Mock Calendar provider")
     return MockCalendarProvider()
@@ -71,12 +83,15 @@ def get_email_provider(db=None) -> EmailProvider:
 
 
 def get_payment_provider(webhook_url: str = "") -> PaymentProvider:
-    """Get payment provider based on Stripe key availability"""
+    """Get payment provider based on STRIPE_ENABLED flag and key availability"""
+    stripe_enabled = _is_true(os.environ.get("STRIPE_ENABLED"))
     stripe_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
     
-    if stripe_key:
+    if stripe_enabled and stripe_key:
         logger.info("Using Stripe payment provider")
         return StripePaymentProvider(webhook_url)
+    elif stripe_enabled:
+        logger.warning("STRIPE_ENABLED=true but no API key found, falling back to mock")
     
     logger.info("Using Mock Payment provider")
     return MockPaymentProvider()
@@ -96,10 +111,10 @@ def get_sms() -> SMSProvider:
     return _sms_provider
 
 
-def get_calendar() -> CalendarProvider:
+def get_calendar(db=None) -> CalendarProvider:
     global _calendar_provider
     if _calendar_provider is None:
-        _calendar_provider = get_calendar_provider()
+        _calendar_provider = get_calendar_provider(db)
     return _calendar_provider
 
 

@@ -14,6 +14,10 @@ import SettingsPage from "./pages/SettingsPage";
 import SMSConsentPage from "./pages/SMSConsentPage";
 import ClientsPage from "./pages/ClientsPage";
 import ClientDetailPage from "./pages/ClientDetailPage";
+import ReportingPage from "./pages/ReportingPage";
+import JobsPage from "./pages/JobsPage";
+import PaymentSuccessPage from "./pages/PaymentSuccessPage";
+import PaymentCancelPage from "./pages/PaymentCancelPage";
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -123,6 +127,16 @@ function App() {
             {/* Public Routes */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/sms-consent" element={<SMSConsentPage />} />
+            <Route path="/payment/success" element={
+              <ProtectedRoute>
+                <PaymentSuccessPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/payment/cancel" element={
+              <ProtectedRoute>
+                <PaymentCancelPage />
+              </ProtectedRoute>
+            } />
             
             {/* Protected Routes */}
             <Route path="/" element={
@@ -158,6 +172,16 @@ function App() {
             <Route path="/waitlist" element={
               <ProtectedRoute>
                 <WaitlistPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/reporting" element={
+              <ProtectedRoute>
+                <ReportingPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/jobs" element={
+              <ProtectedRoute>
+                <JobsPage />
               </ProtectedRoute>
             } />
             <Route path="/settings" element={

@@ -23,7 +23,9 @@ const navItems = [
   { path: "/appointments", label: "Appointments", icon: Calendar },
   { path: "/clients", label: "Clients", icon: UserRound },
   { path: "/waitlist", label: "Waitlist", icon: Users },
-  { path: "/settings", label: "Settings", icon: Settings },
+  { path: "/reporting", label: "Reporting", icon: LayoutDashboard },
+  { path: "/jobs", label: "Jobs", icon: Settings },
+  { path: "/settings", label: "Settings", icon: Scissors },
 ];
 
 export default function Layout({ children, title }) {

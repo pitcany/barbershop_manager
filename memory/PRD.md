@@ -1,113 +1,96 @@
 # Barbershop Autopilot - Product Requirements Document
 
 ## Original Problem Statement
-Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and recover lost revenue for a single barbershop. The system must handle inbound SMS, manage booking/rescheduling, enforce deposits/confirmations, fill cancellations from waitlist, and quantify recovered revenue.
+Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and recover lost revenue for a single barbershop. The system handles inbound SMS, booking/rescheduling, deposits/confirmations, cancellation filling from waitlist, and revenue tracking.
 
-## User Choices
-- **SMS Integration**: Simulation mode (TWILIO_ENABLED=false) — awaiting user credentials
-- **Payments**: Stripe test mode with mock fallback (STRIPE_ENABLED=false)
-- **Calendar**: Mock provider (CALENDAR_ENABLED=false)
-- **Email**: SendGrid active with user-provided API key
-- **Database**: MongoDB (deviation from original PostgreSQL requirement)
-- **Authentication**: JWT-based with bcrypt password hashing
+## Architecture
+- **Backend**: FastAPI + MongoDB + APScheduler
+- **Frontend**: React + Tailwind + Shadcn/UI + Recharts
+- **Auth**: JWT + bcrypt
+- **External Services**: Provider abstraction (real/mock) for Twilio, Stripe, SendGrid, Google Calendar
 
-## Architecture Overview
+## Agent System
+| Agent | Status | Description |
+|-------|--------|-------------|
+| FrontDeskAgent | Active | Handles inbound SMS, booking, template responses |
+| NoShowEnforcementAgent | Active | Deposit requests, no-show detection |
+| WaitlistFillAgent | Active | Finds matches, contacts waitlist clients |
+| OwnerOpsAgent | Active | Daily summary emails to shop owner |
+| RetentionRebookAgent | Active | Re-engages lapsed clients via email/SMS |
 
-### Backend
-- **Framework**: FastAPI (Python 3.11+)
-- **Database**: MongoDB with Motor async driver
-- **Authentication**: JWT tokens with bcrypt password hashing (passlib)
-
-### Frontend
-- **Framework**: React with Tailwind CSS
-- **Components**: Shadcn/UI
-- **Charts**: Recharts
-
-### Provider Abstraction Layer
-All external services behind interfaces:
-- SMSProvider → TwilioSMSProvider or MockSMSProvider
-- CalendarProvider → GoogleCalendarProvider or MockCalendarProvider
-- EmailProvider → SendGridEmailProvider (ACTIVE) or MockEmailProvider
-- PaymentProvider → StripePaymentProvider or MockPaymentProvider
-
-### Agent System
-- **FrontDeskAgent**: Handles inbound SMS, booking logic, template responses
-- **NoShowEnforcementAgent**: Deposit requests, no-show detection
-- **WaitlistFillAgent**: Finds matches and contacts waitlist clients
+## Background Jobs (APScheduler)
+| Job | Schedule | Description |
+|-----|----------|-------------|
+| Appointment Reminders | Every hour | SMS reminders for upcoming appointments |
+| Daily Summary Email | Daily 20:00 UTC | Operational summary to shop owner |
+| Client Retention Sweep | Daily 14:00 UTC | Email/SMS outreach to lapsed clients |
 
 ## What's Been Implemented
 
-### Phase 1: MVP Core (Feb 6, 2026)
-- [x] Database models (Shop, Barber, Service, Client, Appointment, Message, Waitlist, Payment, Event)
-- [x] Provider abstraction layer with mock/real implementations
-- [x] Agent logic (FrontDeskAgent, NoShowEnforcementAgent, WaitlistFillAgent)
-- [x] Admin authentication (JWT + bcrypt)
-- [x] Dashboard with stats and revenue chart
-- [x] Conversations view (SMS message threads)
-- [x] Appointments management with status machine
-- [x] Waitlist management
-- [x] Policy settings editor
-- [x] SMS consent form (public page)
-- [x] Twilio webhook endpoint
-- [x] Stripe webhook endpoint
-- [x] Demo data seeding
-- [x] SMS compliance (consent tracking, STOP handling)
-- [x] Audit logging for all external API calls
-- [x] Revenue recovery tracking
+### Phase 1: MVP Core (Feb 6)
+- [x] All database models + provider abstraction layer
+- [x] Agent system (FrontDesk, NoShow, Waitlist)
+- [x] Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
+- [x] SMS compliance, audit logging, revenue recovery tracking
 
-### Phase 2: High-Impact Enhancements (Feb 12, 2026)
-- [x] **Scheduling Engine**: Conflict prevention, business hours validation, slot availability
-- [x] **Client Management Dashboard**: Search, create, view history, book appointments
-- [x] **Real-Time Conversations**: Live polling (3s interval), new message indicators
-- [x] **Client Detail Page**: Full history (appointments + messages), stats, waitlist management
-- [x] **Appointment Booking**: Slot selection from scheduling engine, conflict validation
+### Phase 2: High-Impact Enhancements (Feb 12)
+- [x] Scheduling Engine with conflict prevention
+- [x] Client Management Dashboard (search, create, history, booking)
+- [x] Real-Time Conversations with live polling
 
-### All Features Working
-- Admin login/logout
-- Dashboard statistics & revenue chart
-- Client list with search, create, edit
-- Client detail with appointment/message history
-- Appointment booking with conflict prevention
-- Scheduling availability with business hours
-- Conversation threads with live polling
-- Appointment listing with status filters
-- Status updates with state machine validation
-- Waitlist management
-- Policy settings
-- SMS consent form
-- SendGrid email integration (active)
-- Appointment reminders (manual trigger)
+### Phase 3: Background Tasks & OwnerOpsAgent (Feb 12)
+- [x] APScheduler: hourly reminders + daily summary + retention sweep
+- [x] OwnerOpsAgent: daily HTML summary email to shop owner
 
-## Mocked Integrations
-- **Twilio SMS**: MOCKED (TWILIO_ENABLED=false) — awaiting credentials
-- **Stripe Payments**: MOCKED (STRIPE_ENABLED=false)
-- **Google Calendar**: MOCKED (CALENDAR_ENABLED=false)
+### Phase 4: Dashboards (Feb 12)
+- [x] Reporting Dashboard: KPIs, charts, barber performance, recovery events
+- [x] Jobs Dashboard: scheduler status, run/preview, execution history
+
+### Phase 5: RetentionRebookAgent (Feb 12)
+- [x] Multi-touch escalation: email touch 1 (friendly), touch 2 (warmer), SMS touch 3 (high-signal only)
+- [x] Configurable lapse threshold + cooldown period in Settings
+- [x] Outreach history tracking + cooldown enforcement
+- [x] Scheduled daily sweep at 14:00 UTC
+
+### Phase 6: Stripe & Google Calendar Integrations (Feb 12)
+- [x] **Stripe Payments (REAL)**: Checkout sessions via emergentintegrations, payment_transactions collection, status polling, webhook handler
+- [x] **Google Calendar (REAL OAuth2)**: OAuth flow (login/callback), token storage/refresh, event CRUD (create on booking, delete on cancel), freebusy availability
+- [x] Frontend: Pay Deposit button, Payment Success/Cancel pages, Integrations status in Settings
+- [x] Calendar sync: new appointments auto-create Google Calendar events, cancellations auto-delete events
+
+## Integration Status
+| Service | Status | Details |
+|---------|--------|---------|
+| SendGrid Email | **Active** | User-provided API key |
+| Stripe Payments | **Active** | Using sk_test_emergent via emergentintegrations |
+| Google Calendar | **Active** | OAuth2 with user-provided client credentials |
+| Twilio SMS | Mocked | TWILIO_ENABLED=false, awaiting credentials |
 
 ## Prioritized Backlog
 
-### P0 (Completed)
-- [x] Core MVP features
-- [x] Scheduling Engine with conflict prevention
-- [x] Client Management Dashboard
-- [x] Real-Time Conversation View
+### P1 (Next)
+- [ ] Enable Twilio for real SMS (pending credentials)
+- [ ] Migrate APScheduler to Celery+Redis for production
 
-### P1 (Important - Next)
-- [ ] Enable Twilio for real SMS (pending user credentials)
-- [ ] Implement Background Tasks with Celery for reminders
-- [ ] Complete OwnerOpsAgent (daily summary emails via SendGrid)
-
-### P2 (Nice to Have)
-- [ ] Build Reporting Dashboard for recovered revenue events
-- [ ] RetentionRebookAgent implementation
-- [ ] Real Stripe integration for deposits/no-show fees
-- [ ] Real Google Calendar integration
-
-### P3 (Future)
-- [ ] Migrate from MongoDB to PostgreSQL (as per original requirements)
-- [ ] Multi-shop support
-- [ ] Client portal for self-service
+### P2 (Future)
+- [ ] Client self-service portal (confirm/reschedule via link)
+- [ ] Migrate MongoDB to PostgreSQL
 - [ ] Refactor server.py into modular route files
+- [ ] Multi-shop support
+
+## Key API Endpoints (New)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/payments/create-deposit/{id} | POST | Create Stripe checkout for appointment deposit |
+| /api/payments/status/{session_id} | GET | Poll Stripe payment status |
+| /api/payments/transactions | GET | List all payment transactions |
+| /api/webhooks/stripe | POST | Stripe webhook handler |
+| /api/oauth/calendar/login | GET | Initiate Google Calendar OAuth |
+| /api/oauth/calendar/callback | GET | Handle OAuth callback |
+| /api/calendar/status | GET | Check calendar connection |
+| /api/calendar/disconnect | POST | Disconnect calendar |
+| /api/calendar/events | GET | List calendar events |
 
 ## Credentials
-- **Admin Login**: username=admin, password=admin123
-- **Preview URL**: https://waitlist-hero.preview.emergentagent.com
+- **Admin**: username=admin, password=admin123
+- **Preview**: https://booking-recovery.preview.emergentagent.com

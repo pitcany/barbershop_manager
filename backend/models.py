@@ -359,6 +359,10 @@ class PolicyUpdate(BaseModel):
     cancellation_window_hours: Optional[int] = None
     max_messages_per_day: Optional[int] = None
     business_hours: Optional[dict] = None
+    # Retention settings
+    retention_enabled: Optional[bool] = None
+    retention_lapse_weeks: Optional[int] = None
+    retention_cooldown_days: Optional[int] = None
 
     @field_validator("deposit_amount")
     @classmethod
@@ -500,6 +504,7 @@ class IntegrationAuditLog(BaseModel):
 class RevenueSource(str, Enum):
     WAITLIST_FILL = "waitlist_fill"
     NO_SHOW_FEE = "no_show_fee"
+    RETENTION_REBOOK = "retention_rebook"
 
 
 class RecoveredRevenueEvent(BaseModel):

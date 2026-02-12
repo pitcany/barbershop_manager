@@ -75,18 +75,15 @@ class StripePaymentProvider(PaymentProvider):
     def __init__(self, webhook_url: str = ""):
         self.api_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
         self.webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-        self.webhook_url = webhook_url
-        self.checkout = None
+        self.default_webhook_url = webhook_url
 
-        if self.api_key:
-            try:
-                from emergentintegrations.payments.stripe.checkout import StripeCheckout
-                self.checkout = StripeCheckout(api_key=self.api_key, webhook_url=webhook_url)
-                logger.info("Stripe payment provider initialized")
-            except ImportError:
-                logger.warning("emergentintegrations not installed")
-        else:
+        if not self.api_key:
             logger.warning("Stripe API key not found")
+    
+    def _get_checkout(self, webhook_url: str = "") -> "StripeCheckout":
+        from emergentintegrations.payments.stripe.checkout import StripeCheckout
+        url = webhook_url or self.default_webhook_url
+        return StripeCheckout(api_key=self.api_key, webhook_url=url)
     
     async def create_payment_link(
         self,
@@ -96,11 +93,19 @@ class StripePaymentProvider(PaymentProvider):
         cancel_url: str,
         metadata: Dict[str, str]
     ) -> PaymentLink:
-        if not self.checkout:
+        if not self.api_key:
             raise Exception("Stripe not configured")
         
         try:
             from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest
+            
+            # Derive webhook_url from success_url's origin
+            from urllib.parse import urlparse
+            parsed = urlparse(success_url)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            webhook_url = f"{origin}/api/webhooks/stripe"
+            
+            checkout = self._get_checkout(webhook_url)
             
             request = CheckoutSessionRequest(
                 amount=float(amount),
@@ -110,7 +115,7 @@ class StripePaymentProvider(PaymentProvider):
                 metadata=metadata
             )
             
-            response = await self.checkout.create_checkout_session(request)
+            response = await checkout.create_checkout_session(request)
             
             logger.info(f"[STRIPE] Created payment session: {response.session_id}")
             
@@ -123,7 +128,7 @@ class StripePaymentProvider(PaymentProvider):
             raise
     
     async def get_payment_status(self, session_id: str) -> PaymentStatus:
-        if not self.checkout:
+        if not self.api_key:
             return PaymentStatus(
                 status="unknown",
                 payment_status="unknown",
@@ -132,7 +137,8 @@ class StripePaymentProvider(PaymentProvider):
             )
         
         try:
-            status = await self.checkout.get_checkout_status(session_id)
+            checkout = self._get_checkout()
+            status = await checkout.get_checkout_status(session_id)
             
             return PaymentStatus(
                 status=status.status,
@@ -151,7 +157,7 @@ class StripePaymentProvider(PaymentProvider):
             )
     
     async def handle_webhook(self, request_body: bytes, signature: str) -> Dict[str, Any]:
-        if not self.checkout:
+        if not self.api_key:
             return {"error": "Stripe not configured"}
 
         if not self.webhook_secret:
@@ -235,95 +241,116 @@ class SendGridEmailProvider(EmailProvider):
 
 
 class GoogleCalendarProvider(CalendarProvider):
-    """Real Google Calendar provider"""
+    """Real Google Calendar provider using OAuth2"""
     
-    def __init__(self):
-        self.service = None
-        self._setup_client()
+    def __init__(self, db=None):
+        self.db = db
+        self.client_id = os.environ.get("GOOGLE_CLIENT_ID")
+        self.client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+        
+        if self.client_id and self.client_secret:
+            logger.info("Google Calendar provider initialized (OAuth2)")
+        else:
+            logger.warning("Google Calendar OAuth credentials not found")
     
-    def _setup_client(self):
-        try:
-            from google.oauth2 import service_account
-            from googleapiclient.discovery import build
-            
-            # Try to load service account credentials
-            creds_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-            if creds_path and os.path.exists(creds_path):
-                creds = service_account.Credentials.from_service_account_file(
-                    creds_path,
-                    scopes=['https://www.googleapis.com/auth/calendar']
-                )
-                self.service = build('calendar', 'v3', credentials=creds)
-                logger.info("Google Calendar provider initialized")
-            else:
-                logger.warning("Google Calendar credentials not found")
-        except ImportError:
-            logger.warning("Google API libraries not installed")
-        except Exception as e:
-            logger.error(f"Failed to setup Google Calendar: {e}")
+    async def _get_service(self):
+        """Get an authenticated Google Calendar service using stored OAuth tokens"""
+        if self.db is None or not self.client_id:
+            return None
+        
+        tokens_doc = await self.db.google_calendar_tokens.find_one({}, {"_id": 0})
+        if not tokens_doc or not tokens_doc.get("access_token"):
+            logger.warning("No Google Calendar tokens found - user needs to connect")
+            return None
+        
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request as GoogleRequest
+        from googleapiclient.discovery import build
+        
+        creds = Credentials(
+            token=tokens_doc["access_token"],
+            refresh_token=tokens_doc.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=self.client_id,
+            client_secret=self.client_secret
+        )
+        
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GoogleRequest())
+            await self.db.google_calendar_tokens.update_one(
+                {},
+                {"$set": {"access_token": creds.token}},
+                upsert=True
+            )
+        
+        return build("calendar", "v3", credentials=creds)
     
     async def create_event(self, calendar_id: str, event: CalendarEvent) -> Optional[str]:
-        if not self.service:
-            logger.warning("Google Calendar not configured, skipping event creation")
+        service = await self._get_service()
+        if not service:
+            logger.warning("Google Calendar not connected, skipping event creation")
             return None
         
         try:
             event_body = {
-                'summary': event.summary,
-                'description': event.description,
-                'start': {'dateTime': event.start_time.isoformat(), 'timeZone': 'UTC'},
-                'end': {'dateTime': event.end_time.isoformat(), 'timeZone': 'UTC'},
+                "summary": event.summary,
+                "description": event.description or "",
+                "start": {"dateTime": event.start_time.isoformat(), "timeZone": "UTC"},
+                "end": {"dateTime": event.end_time.isoformat(), "timeZone": "UTC"},
             }
-            
+            if event.location:
+                event_body["location"] = event.location
             if event.attendee_email:
-                event_body['attendees'] = [{'email': event.attendee_email}]
+                event_body["attendees"] = [{"email": event.attendee_email}]
             
-            request = self.service.events().insert(
+            request = service.events().insert(
                 calendarId=calendar_id,
                 body=event_body
             )
             result = await asyncio.to_thread(request.execute)
             
             logger.info(f"[GCAL] Created event: {result['id']}")
-            return result['id']
+            return result["id"]
         except Exception as e:
             logger.error(f"[GCAL] Failed to create event: {e}")
             return None
     
     async def update_event(self, calendar_id: str, event_id: str, event: CalendarEvent) -> bool:
-        if not self.service:
+        service = await self._get_service()
+        if not service:
             return False
         
         try:
             event_body = {
-                'summary': event.summary,
-                'description': event.description,
-                'start': {'dateTime': event.start_time.isoformat(), 'timeZone': 'UTC'},
-                'end': {'dateTime': event.end_time.isoformat(), 'timeZone': 'UTC'},
+                "summary": event.summary,
+                "description": event.description or "",
+                "start": {"dateTime": event.start_time.isoformat(), "timeZone": "UTC"},
+                "end": {"dateTime": event.end_time.isoformat(), "timeZone": "UTC"},
             }
-            
-            request = self.service.events().update(
+            request = service.events().update(
                 calendarId=calendar_id,
                 eventId=event_id,
                 body=event_body
             )
             await asyncio.to_thread(request.execute)
-            
+            logger.info(f"[GCAL] Updated event: {event_id}")
             return True
         except Exception as e:
             logger.error(f"[GCAL] Failed to update event: {e}")
             return False
     
     async def delete_event(self, calendar_id: str, event_id: str) -> bool:
-        if not self.service:
+        service = await self._get_service()
+        if not service:
             return False
         
         try:
-            request = self.service.events().delete(
+            request = service.events().delete(
                 calendarId=calendar_id,
                 eventId=event_id
             )
             await asyncio.to_thread(request.execute)
+            logger.info(f"[GCAL] Deleted event: {event_id}")
             return True
         except Exception as e:
             logger.error(f"[GCAL] Failed to delete event: {e}")
@@ -335,12 +362,38 @@ class GoogleCalendarProvider(CalendarProvider):
         start_date: datetime, 
         end_date: datetime
     ) -> List[CalendarSlot]:
-        # For MVP, return empty list if not configured
-        if not self.service:
+        service = await self._get_service()
+        if not service:
             return []
         
-        # TODO: Implement freebusy query
-        return []
+        try:
+            body = {
+                "timeMin": start_date.isoformat(),
+                "timeMax": end_date.isoformat(),
+                "items": [{"id": calendar_id}]
+            }
+            result = service.freebusy().query(body=body).execute()
+            busy_slots = result.get("calendars", {}).get(calendar_id, {}).get("busy", [])
+            
+            # Generate 30-min slots for business hours, mark busy ones
+            slots = []
+            current = start_date.replace(hour=9, minute=0, second=0, microsecond=0)
+            while current < end_date:
+                if current.weekday() < 6 and 9 <= current.hour < 18:
+                    end_time = current + timedelta(minutes=30)
+                    available = True
+                    for busy in busy_slots:
+                        busy_start = datetime.fromisoformat(busy["start"].replace("Z", "+00:00"))
+                        busy_end = datetime.fromisoformat(busy["end"].replace("Z", "+00:00"))
+                        if current < busy_end and end_time > busy_start:
+                            available = False
+                            break
+                    slots.append(CalendarSlot(start_time=current, end_time=end_time, available=available))
+                current += timedelta(minutes=30)
+            return slots
+        except Exception as e:
+            logger.error(f"[GCAL] Failed to get availability: {e}")
+            return []
     
     async def is_slot_available(
         self, 
@@ -348,8 +401,19 @@ class GoogleCalendarProvider(CalendarProvider):
         start_time: datetime, 
         end_time: datetime
     ) -> bool:
-        if not self.service:
+        service = await self._get_service()
+        if not service:
             return True  # Assume available if not configured
         
-        # TODO: Implement availability check
-        return True
+        try:
+            body = {
+                "timeMin": start_time.isoformat(),
+                "timeMax": end_time.isoformat(),
+                "items": [{"id": calendar_id}]
+            }
+            result = service.freebusy().query(body=body).execute()
+            busy = result.get("calendars", {}).get(calendar_id, {}).get("busy", [])
+            return len(busy) == 0
+        except Exception as e:
+            logger.error(f"[GCAL] Failed to check availability: {e}")
+            return True

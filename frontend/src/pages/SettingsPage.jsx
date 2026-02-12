@@ -18,7 +18,12 @@ import {
   Save,
   Store,
   Send,
-  AlertCircle
+  AlertCircle,
+  CalendarDays,
+  CreditCard,
+  Link2,
+  Link2Off,
+  CheckCircle2
 } from "lucide-react";
 
 export default function SettingsPage() {
@@ -27,6 +32,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testSMS, setTestSMS] = useState({ phone: "", message: "" });
   const [sendingTest, setSendingTest] = useState(false);
+  const [calendarStatus, setCalendarStatus] = useState({ connected: false, email: "" });
+  const [connectingCalendar, setConnectingCalendar] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -34,11 +41,26 @@ export default function SettingsPage() {
     deposit_required_hours: 48,
     confirmation_window_hours: 24,
     cancellation_window_hours: 4,
-    max_messages_per_day: 4
+    max_messages_per_day: 4,
+    retention_enabled: true,
+    retention_lapse_weeks: 4,
+    retention_cooldown_days: 7,
   });
 
   useEffect(() => {
     fetchShop();
+    fetchCalendarStatus();
+    // Check for calendar connection callback
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("calendar_connected") === "true") {
+      toast.success("Google Calendar connected successfully!");
+      window.history.replaceState({}, "", "/settings");
+      fetchCalendarStatus();
+    }
+    if (params.get("calendar_error")) {
+      toast.error("Failed to connect Google Calendar");
+      window.history.replaceState({}, "", "/settings");
+    }
   }, []);
 
   const fetchShop = async () => {
@@ -50,13 +72,50 @@ export default function SettingsPage() {
         deposit_required_hours: response.data.deposit_required_hours,
         confirmation_window_hours: response.data.confirmation_window_hours,
         cancellation_window_hours: response.data.cancellation_window_hours,
-        max_messages_per_day: response.data.max_messages_per_day
+        max_messages_per_day: response.data.max_messages_per_day,
+        retention_enabled: response.data.retention_enabled ?? true,
+        retention_lapse_weeks: response.data.retention_lapse_weeks ?? 4,
+        retention_cooldown_days: response.data.retention_cooldown_days ?? 7,
       });
     } catch (error) {
       console.error("Failed to fetch shop:", error);
       toast.error("Failed to load shop settings");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCalendarStatus = async () => {
+    try {
+      const res = await axios.get(`${API}/calendar/status`);
+      setCalendarStatus(res.data);
+    } catch (error) {
+      console.error("Failed to fetch calendar status:", error);
+    }
+  };
+
+  const connectCalendar = async () => {
+    setConnectingCalendar(true);
+    try {
+      const res = await axios.get(`${API}/oauth/calendar/login`, {
+        headers: { "x-origin": window.location.origin }
+      });
+      if (res.data.authorization_url) {
+        window.location.href = res.data.authorization_url;
+      }
+    } catch (error) {
+      toast.error("Failed to initiate Google Calendar connection");
+      setConnectingCalendar(false);
+    }
+  };
+
+  const disconnectCalendar = async () => {
+    try {
+      await axios.post(`${API}/calendar/disconnect`);
+      setCalendarStatus({ connected: false, email: "" });
+      toast.success("Google Calendar disconnected");
+    } catch (error) {
+      toast.error("Failed to disconnect Google Calendar");
     }
   };
 
@@ -281,6 +340,69 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            <Separator />
+
+            {/* Retention Settings */}
+            <div>
+              <h4 className="text-sm font-medium mb-4 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-primary" />
+                Client Retention
+              </h4>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 p-3">
+                  <div>
+                    <p className="text-sm font-medium">Enable Retention Outreach</p>
+                    <p className="text-xs text-muted-foreground">Automatically re-engage lapsed clients</p>
+                  </div>
+                  <Switch
+                    data-testid="retention-enabled-switch"
+                    checked={formData.retention_enabled}
+                    onCheckedChange={(v) => setFormData(prev => ({ ...prev, retention_enabled: v }))}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="retention_lapse_weeks">
+                      Lapse Threshold (weeks since last visit)
+                    </Label>
+                    <Input
+                      id="retention_lapse_weeks"
+                      data-testid="retention-lapse-weeks-input"
+                      type="number"
+                      min="1"
+                      max="12"
+                      value={formData.retention_lapse_weeks}
+                      onChange={(e) => setFormData(prev => ({ ...prev, retention_lapse_weeks: parseInt(e.target.value) }))}
+                      className="bg-input/50 border-input"
+                      disabled={!formData.retention_enabled}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Clients with no visit after this many weeks will receive outreach
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="retention_cooldown_days">
+                      Cooldown Period (days between touches)
+                    </Label>
+                    <Input
+                      id="retention_cooldown_days"
+                      data-testid="retention-cooldown-input"
+                      type="number"
+                      min="1"
+                      max="30"
+                      value={formData.retention_cooldown_days}
+                      onChange={(e) => setFormData(prev => ({ ...prev, retention_cooldown_days: parseInt(e.target.value) }))}
+                      className="bg-input/50 border-input"
+                      disabled={!formData.retention_enabled}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Minimum days between outreach messages to the same client
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="flex justify-end">
               <Button
                 onClick={handleSave}
@@ -291,6 +413,79 @@ export default function SettingsPage() {
                 <Save className="w-4 h-4 mr-2" />
                 {saving ? "Saving..." : "Save Settings"}
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Integrations */}
+        <Card className="bg-card border-border">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-500/10 rounded-lg flex items-center justify-center">
+                <Link2 className="w-5 h-5 text-indigo-400" />
+              </div>
+              <div>
+                <CardTitle className="font-heading">Integrations</CardTitle>
+                <CardDescription>Connected external services</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Stripe */}
+            <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 p-4" data-testid="stripe-integration-card">
+              <div className="flex items-center gap-3">
+                <CreditCard className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <p className="text-sm font-medium">Stripe Payments</p>
+                  <p className="text-xs text-muted-foreground">Deposit collection & payment processing</p>
+                </div>
+              </div>
+              <Badge className="bg-emerald-500/20 text-emerald-400" data-testid="stripe-status-badge">
+                <CheckCircle2 className="w-3 h-3 mr-1" /> Active
+              </Badge>
+            </div>
+
+            {/* Google Calendar */}
+            <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 p-4" data-testid="gcal-integration-card">
+              <div className="flex items-center gap-3">
+                <CalendarDays className="w-5 h-5 text-blue-400" />
+                <div>
+                  <p className="text-sm font-medium">Google Calendar</p>
+                  <p className="text-xs text-muted-foreground">
+                    {calendarStatus.connected
+                      ? `Connected as ${calendarStatus.email}`
+                      : "Sync appointments to your calendar"}
+                  </p>
+                </div>
+              </div>
+              {calendarStatus.connected ? (
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-emerald-500/20 text-emerald-400" data-testid="gcal-status-badge">
+                    <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={disconnectCalendar}
+                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    data-testid="disconnect-calendar-btn"
+                  >
+                    <Link2Off className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={connectCalendar}
+                  disabled={connectingCalendar}
+                  data-testid="connect-calendar-btn"
+                  className="gap-1"
+                >
+                  <Link2 className="w-4 h-4" />
+                  {connectingCalendar ? "Connecting..." : "Connect"}
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
