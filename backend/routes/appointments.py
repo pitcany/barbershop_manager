@@ -6,7 +6,7 @@ import uuid
 import logging
 
 from deps import db, get_shop, get_current_user, batch_fetch_map
-from models import Shop, AppointmentStatus, CreateAppointmentRequest
+from models import Shop, AppointmentStatus, CreateAppointmentRequest, ALLOWED_TRANSITIONS
 from providers import get_calendar
 from providers.interfaces import CalendarEvent
 from agents import NoShowEnforcementAgent, WaitlistFillAgent
@@ -15,17 +15,6 @@ from scheduling import create_scheduling_engine
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-ALLOWED_TRANSITIONS = {
-    "pending": {"confirmed", "cancelled", "deposit_pending"},
-    "confirmed": {"completed", "cancelled", "no_show", "rescheduled"},
-    "deposit_pending": {"deposit_paid", "cancelled"},
-    "deposit_paid": {"confirmed", "completed", "cancelled", "no_show"},
-    "rescheduled": {"pending", "confirmed", "cancelled"},
-    "completed": set(),
-    "no_show": set(),
-    "cancelled": set(),
-}
 
 
 @router.get("/appointments")
@@ -141,6 +130,15 @@ async def update_appointment_status(appointment_id: str, status: str, shop: Shop
         logger.error(f"Agent trigger failed for {appointment_id} -> {status}: {e}")
 
     return {"message": "Status updated"}
+
+
+@router.get("/appointments/allowed-transitions")
+async def get_allowed_transitions(shop: Shop = Depends(get_shop)):
+    """Return the appointment state machine transitions for frontend validation."""
+    return {
+        status: sorted(targets)
+        for status, targets in ALLOWED_TRANSITIONS.items()
+    }
 
 
 # ==================== SCHEDULING / AVAILABILITY ====================

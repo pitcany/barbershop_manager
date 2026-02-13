@@ -30,6 +30,20 @@ class AppointmentStatus(str, Enum):
     RESCHEDULED = "rescheduled"  # Moved to new time
 
 
+# Valid state machine transitions for appointments
+ALLOWED_TRANSITIONS = {
+    "pending": {"confirmed", "cancelled", "deposit_pending"},
+    "confirmed": {"completed", "cancelled", "no_show", "rescheduled"},
+    "deposit_pending": {"deposit_paid", "cancelled"},
+    "deposit_paid": {"confirmed", "completed", "cancelled", "no_show"},
+    "rescheduled": {"pending", "confirmed", "cancelled"},
+    # Terminal states — no outgoing transitions
+    "completed": set(),
+    "no_show": set(),
+    "cancelled": set(),
+}
+
+
 class MessageDirection(str, Enum):
     INBOUND = "inbound"  # From client
     OUTBOUND = "outbound"  # To client
@@ -422,6 +436,41 @@ class CreateAppointmentRequest(BaseModel):
     scheduled_at: str
     duration_minutes: Optional[int] = None
     notes: Optional[str] = None
+
+
+class CreateBarberRequest(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class UpdateBarberRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class CreateServiceRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    duration_minutes: int = 30
+    price: float
+
+
+class UpdateServiceRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    price: Optional[float] = None
+    active: Optional[bool] = None
+
+
+class UpdateShopDetailsRequest(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
 
 
 class CreateClientRequest(BaseModel):

@@ -7,7 +7,13 @@ import asyncio
 from html import escape
 
 from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit, batch_fetch_map
-from models import Shop, LoginRequest, TokenResponse, PolicyUpdate
+from models import (
+    Shop, LoginRequest, TokenResponse, PolicyUpdate,
+    CreateBarberRequest, UpdateBarberRequest,
+    CreateServiceRequest, UpdateServiceRequest,
+    UpdateShopDetailsRequest,
+)
+import uuid
 
 router = APIRouter()
 
@@ -23,6 +29,12 @@ async def login(request: LoginRequest, raw_request: Request):
     admin = await db.admin_users.find_one({"username": request.username}, {"_id": 0})
     if not admin or not pwd_context.verify(request.password, admin["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Update last login
+    await db.admin_users.update_one(
+        {"id": admin["id"]},
+        {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
+    )
 
     token = create_access_token({"sub": admin["id"], "username": admin["username"], "shop_id": admin["shop_id"]})
     return TokenResponse(access_token=token, token_type="bearer")
@@ -58,7 +70,6 @@ async def update_shop_policy(update: PolicyUpdate, shop: Shop = Depends(get_shop
 async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    week_start = (now - timedelta(days=7)).isoformat()
     month_start = (now - timedelta(days=30)).isoformat()
 
     # Parallelize all counting and aggregation queries
@@ -143,10 +154,131 @@ async def list_barbers(shop: Shop = Depends(get_shop)):
     return {"barbers": barbers}
 
 
+@router.post("/barbers")
+async def create_barber(body: CreateBarberRequest, shop: Shop = Depends(get_shop)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    barber = {
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "name": body.name,
+        "email": body.email or "",
+        "phone": body.phone or "",
+        "active": True,
+        "created_at": now_iso,
+    }
+    await db.barbers.insert_one(barber)
+    barber.pop("_id", None)
+    return barber
+
+
+@router.patch("/barbers/{barber_id}")
+async def update_barber(barber_id: str, body: UpdateBarberRequest, shop: Shop = Depends(get_shop)):
+    barber = await db.barbers.find_one({"id": barber_id, "shop_id": shop.id}, {"_id": 0})
+    if not barber:
+        raise HTTPException(status_code=404, detail="Barber not found")
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if update_data:
+        await db.barbers.update_one({"id": barber_id}, {"$set": update_data})
+    updated = await db.barbers.find_one({"id": barber_id}, {"_id": 0})
+    return updated
+
+
+@router.delete("/barbers/{barber_id}")
+async def delete_barber(barber_id: str, shop: Shop = Depends(get_shop)):
+    result = await db.barbers.update_one(
+        {"id": barber_id, "shop_id": shop.id},
+        {"$set": {"active": False}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Barber not found")
+    return {"message": "Barber deactivated"}
+
+
 @router.get("/services")
 async def list_services(shop: Shop = Depends(get_shop)):
     services = await db.services.find({"shop_id": shop.id, "active": True}, {"_id": 0}).to_list(50)
     return {"services": services}
+
+
+@router.post("/services")
+async def create_service(body: CreateServiceRequest, shop: Shop = Depends(get_shop)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    service = {
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "name": body.name,
+        "description": body.description or "",
+        "duration_minutes": body.duration_minutes,
+        "price": body.price,
+        "active": True,
+        "created_at": now_iso,
+    }
+    await db.services.insert_one(service)
+    service.pop("_id", None)
+    return service
+
+
+@router.patch("/services/{service_id}")
+async def update_service(service_id: str, body: UpdateServiceRequest, shop: Shop = Depends(get_shop)):
+    service = await db.services.find_one({"id": service_id, "shop_id": shop.id}, {"_id": 0})
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if update_data:
+        await db.services.update_one({"id": service_id}, {"$set": update_data})
+    updated = await db.services.find_one({"id": service_id}, {"_id": 0})
+    return updated
+
+
+@router.delete("/services/{service_id}")
+async def delete_service(service_id: str, shop: Shop = Depends(get_shop)):
+    result = await db.services.update_one(
+        {"id": service_id, "shop_id": shop.id},
+        {"$set": {"active": False}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return {"message": "Service deactivated"}
+
+
+# ==================== SHOP DETAILS ====================
+
+@router.patch("/shop/details")
+async def update_shop_details(body: UpdateShopDetailsRequest, shop: Shop = Depends(get_shop)):
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if update_data:
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.shops.update_one({"id": shop.id}, {"$set": update_data})
+    updated = await db.shops.find_one({"id": shop.id}, {"_id": 0})
+    return updated
+
+
+# ==================== TODAY'S SCHEDULE ====================
+
+@router.get("/dashboard/today-schedule")
+async def get_today_schedule(shop: Shop = Depends(get_shop)):
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+
+    appointments = await db.appointments.find(
+        {"shop_id": shop.id, "scheduled_at": {"$gte": today_start, "$lte": today_end}, "status": {"$nin": ["cancelled"]}},
+        {"_id": 0}
+    ).sort("scheduled_at", 1).to_list(100)
+
+    client_ids = [apt.get("client_id") for apt in appointments if apt.get("client_id")]
+    barber_ids = [apt.get("barber_id") for apt in appointments if apt.get("barber_id")]
+    service_ids = [apt.get("service_id") for apt in appointments if apt.get("service_id")]
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1})
+    barbers_map = await batch_fetch_map(db.barbers, barber_ids, {"id": 1, "name": 1})
+    services_map = await batch_fetch_map(db.services, service_ids, {"id": 1, "name": 1, "price": 1, "duration_minutes": 1})
+
+    for apt in appointments:
+        apt["client"] = clients_map.get(apt.get("client_id"), {"name": "Unknown", "phone": ""})
+        apt["barber"] = barbers_map.get(apt.get("barber_id"), {"name": "Unknown"})
+        apt["service"] = services_map.get(apt.get("service_id"), {"name": "Unknown", "price": 0})
+
+    return {"appointments": appointments, "total": len(appointments)}
 
 
 # ==================== SMS / EMAIL TEST ====================

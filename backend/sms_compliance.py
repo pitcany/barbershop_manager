@@ -13,8 +13,8 @@ from audit import AuditLogger
 
 logger = logging.getLogger(__name__)
 
-# Opt-out keywords (case-insensitive)
-OPT_OUT_KEYWORDS = {"STOP", "UNSUBSCRIBE"}
+# Opt-out keywords per CTIA Short Code Monitoring Handbook (case-insensitive)
+OPT_OUT_KEYWORDS = {"STOP", "STOPALL", "UNSUBSCRIBE", "END", "QUIT"}
 
 # Confirmation message for opt-out
 OPT_OUT_CONFIRMATION = "You have been unsubscribed and will no longer receive messages."

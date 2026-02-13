@@ -15,9 +15,16 @@ from datetime import datetime, timezone, timedelta
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+# Import shared dependencies from deps module
 from deps import db, pwd_context
+
+# Import models (used by seed_demo_data)
 from models import AppointmentStatus, MessageDirection, EventType
+
+# Import scheduler (used by startup/shutdown)
 from scheduler import start_scheduler, stop_scheduler
+
+# Import route modules
 from routes import all_routers
 
 # Configure logging
@@ -36,8 +43,17 @@ app = FastAPI(
 
 # Create API router and include all sub-routers
 api_router = APIRouter(prefix="/api")
+
+
+# All route handlers live in routes/*.py modules
+# (auth, appointments, clients, payments, calendar, jobs, public, webhooks)
+
+
+
+# Include all route modules
 for r in all_routers:
     api_router.include_router(r)
+
 app.include_router(api_router)
 
 # CORS middleware
@@ -61,6 +77,9 @@ async def startup_event():
     """Initialize database with seed data if empty, then start scheduler"""
     logger.info("Starting Barbershop Autopilot...")
 
+    # Ensure TTL index for rate-limit entries (auto-cleanup)
+    await db.rate_limit_entries.create_index("expires_at", expireAfterSeconds=0)
+
     # Performance indexes for high-traffic queries
     await db.appointments.create_index([("shop_id", 1), ("scheduled_at", -1)])
     await db.appointments.create_index([("shop_id", 1), ("status", 1), ("scheduled_at", -1)])
@@ -73,6 +92,7 @@ async def startup_event():
     await db.events.create_index([("shop_id", 1), ("created_at", -1)])
     await db.payments.create_index([("shop_id", 1), ("status", 1), ("payment_type", 1)])
 
+    # Check if shop exists
     shop_count = await db.shops.count_documents({})
     if shop_count == 0:
         logger.info("Seeding demo data...")
@@ -191,4 +211,4 @@ async def seed_demo_data():
     await db.admin_users.insert_one(admin)
 
     logger.info("Demo data seeded successfully!")
-    logger.info(f"Admin login: username='admin', password='{admin_password}'")
+    logger.info("Admin login: username='admin' (password set via ADMIN_PASSWORD env var)")

@@ -86,11 +86,12 @@ class TwilioSMSProvider(SMSProvider):
 
 class StripePaymentProvider(PaymentProvider):
     """Real Stripe payment provider using emergentintegrations"""
-    
+
     def __init__(self, webhook_url: str = ""):
         self.api_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
+        self.webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
         self.default_webhook_url = webhook_url
-        
+
         if not self.api_key:
             logger.warning("Stripe API key not found")
     
@@ -173,21 +174,37 @@ class StripePaymentProvider(PaymentProvider):
     async def handle_webhook(self, request_body: bytes, signature: str) -> Dict[str, Any]:
         if not self.api_key:
             return {"error": "Stripe not configured"}
-        
+
+        if not self.webhook_secret:
+            logger.error("[STRIPE] STRIPE_WEBHOOK_SECRET not configured — rejecting webhook")
+            return {"error": "Webhook secret not configured"}
+
         try:
-            checkout = self._get_checkout()
-            webhook_response = await checkout.handle_webhook(request_body, signature)
-            
-            return {
-                "event_type": webhook_response.event_type,
-                "event_id": webhook_response.event_id,
-                "session_id": webhook_response.session_id,
-                "payment_status": webhook_response.payment_status,
-                "metadata": webhook_response.metadata
-            }
+            import stripe
+            stripe.api_key = self.api_key
+            event = stripe.Webhook.construct_event(
+                request_body, signature, self.webhook_secret
+            )
+        except stripe.error.SignatureVerificationError:
+            logger.warning("[STRIPE] Webhook signature verification failed")
+            return {"error": "Invalid signature"}
         except Exception as e:
-            logger.error(f"[STRIPE] Webhook error: {e}")
-            return {"error": str(e)}
+            logger.error(f"[STRIPE] Webhook parse error: {e}")
+            return {"error": "Webhook verification failed"}
+
+        # Process checkout.session.completed events
+        if event["type"] == "checkout.session.completed":
+            session = event["data"]["object"]
+            return {
+                "event_type": event["type"],
+                "session_id": session.get("id"),
+                "payment_status": session.get("payment_status"),
+            }
+
+        return {
+            "event_type": event["type"],
+            "status": "acknowledged",
+        }
 
 
 class SendGridEmailProvider(EmailProvider):
@@ -306,7 +323,7 @@ class GoogleCalendarProvider(CalendarProvider):
                 event_body["location"] = event.location
             if event.attendee_email:
                 event_body["attendees"] = [{"email": event.attendee_email}]
-            
+
             result = await asyncio.wait_for(
                 asyncio.to_thread(
                     service.events().insert(calendarId=calendar_id, body=event_body).execute

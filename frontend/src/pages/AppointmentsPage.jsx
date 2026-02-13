@@ -2,13 +2,23 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { API } from "../App";
 import Layout from "../components/layout/Layout";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Card, CardContent } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Calendar } from "../components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
-import { 
+import { Textarea } from "../components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "../components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -24,16 +34,17 @@ import {
   TableRow,
 } from "../components/ui/table";
 import { toast } from "sonner";
-import { 
-  Search, 
-  Calendar as CalendarIcon, 
+import {
+  Calendar as CalendarIcon,
   Clock,
   User,
   Scissors,
   Filter,
+  Plus,
   ChevronLeft,
   ChevronRight,
-  CreditCard
+  CreditCard,
+  Plus
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -49,6 +60,10 @@ const statusOptions = [
   { value: "rescheduled", label: "Rescheduled" },
 ];
 
+const statusLabels = Object.fromEntries(
+  statusOptions.filter((o) => o.value !== "all").map((o) => [o.value, o.label])
+);
+
 const statusColors = {
   pending: "bg-yellow-500/20 text-yellow-400",
   confirmed: "bg-emerald-500/20 text-emerald-400",
@@ -60,6 +75,16 @@ const statusColors = {
   rescheduled: "bg-purple-500/20 text-purple-400",
 };
 
+const timeSlots = [];
+for (let h = 8; h <= 19; h++) {
+  for (let m = 0; m < 60; m += 30) {
+    const hh = String(h).padStart(2, "0");
+    const mm = String(m).padStart(2, "0");
+    const label = `${h > 12 ? h - 12 : h}:${mm} ${h >= 12 ? "PM" : "AM"}`;
+    timeSlots.push({ value: `${hh}:${mm}`, label });
+  }
+}
+
 export default function AppointmentsPage() {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,9 +94,79 @@ export default function AppointmentsPage() {
   const [total, setTotal] = useState(0);
   const limit = 20;
 
+  // Allowed transitions map fetched from backend
+  const [allowedTransitions, setAllowedTransitions] = useState({});
+
+  // Shop timezone (e.g. "America/New_York") — fetched once on mount
+  const [shopTimezone, setShopTimezone] = useState(null);
+
+  // New appointment modal state
+  const [newModalOpen, setNewModalOpen] = useState(false);
+  const [clients, setClients] = useState([]);
+  const [barbers, setBarbers] = useState([]);
+  const [services, setServices] = useState([]);
+  const [clientSearch, setClientSearch] = useState("");
+  const [newApt, setNewApt] = useState({
+    client_id: "", barber_id: "", service_id: "", date: null, time: "", notes: ""
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => { fetchAppointments(); }, [statusFilter, dateFilter, page]);
+
   useEffect(() => {
-    fetchAppointments();
-  }, [statusFilter, dateFilter, page]);
+    fetchAllowedTransitions();
+    fetchShopTimezone();
+  }, []);
+
+  const fetchAllowedTransitions = async () => {
+    try {
+      const response = await axios.get(`${API}/appointments/allowed-transitions`);
+      setAllowedTransitions(response.data);
+    } catch {
+      // Fallback: show no action options (safe default)
+    }
+  };
+
+  const fetchShopTimezone = async () => {
+    try {
+      const response = await axios.get(`${API}/shop`);
+      setShopTimezone(response.data.timezone || "UTC");
+    } catch {
+      setShopTimezone("UTC");
+    }
+  };
+
+  /**
+   * Convert a datetime-local string (e.g. "2026-02-12T14:30") to a UTC ISO
+   * string, interpreting the wall-clock time in the shop's IANA timezone
+   * rather than the browser's local timezone.
+   */
+  const localInputToISO = (localValue) => {
+    if (!localValue || !shopTimezone) return "";
+    // Parse components directly — avoids any browser-timezone interpretation
+    const [datePart, timePart] = localValue.split("T");
+    const [year, month, day] = datePart.split("-").map(Number);
+    const [hour, minute] = (timePart || "00:00").split(":").map(Number);
+
+    // Create a Date treating these values as UTC (just a reference point)
+    const naiveUTC = new Date(Date.UTC(year, month - 1, day, hour, minute));
+
+    // Determine what wall-clock time the shop tz shows at this UTC instant
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: shopTimezone,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false,
+    }).formatToParts(naiveUTC);
+    const g = (type) => parseInt(parts.find((p) => p.type === type)?.value || "0");
+    const shopAtNaiveUTC = Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute"), g("second"));
+
+    // offset = (shop display) − (UTC epoch)  → positive when shop is east of UTC
+    const offsetMs = shopAtNaiveUTC - naiveUTC.getTime();
+
+    // User entered shop-local time → UTC = naive − offset
+    return new Date(naiveUTC.getTime() - offsetMs).toISOString();
+  };
 
   const fetchAppointments = async () => {
     setLoading(true);
@@ -81,15 +176,25 @@ export default function AppointmentsPage() {
       if (dateFilter) params.append("date", format(dateFilter, "yyyy-MM-dd"));
       params.append("limit", limit);
       params.append("skip", page * limit);
-
       const response = await axios.get(`${API}/appointments?${params}`);
       setAppointments(response.data.appointments);
       setTotal(response.data.total);
-    } catch (error) {
-      console.error("Failed to fetch appointments:", error);
-      toast.error("Failed to load appointments");
-    } finally {
-      setLoading(false);
+    } catch { toast.error("Failed to load appointments"); }
+    finally { setLoading(false); }
+  };
+
+  const fetchFormData = async () => {
+    try {
+      const [b, s, c] = await Promise.all([
+        axios.get(`${API}/barbers`),
+        axios.get(`${API}/services`),
+        axios.get(`${API}/clients?limit=200`),
+      ]);
+      setBarbers(b.data.barbers || []);
+      setServices(s.data.services || []);
+      setClients(c.data.clients || []);
+    } catch {
+      toast.error("Failed to load form data");
     }
   };
 
@@ -103,11 +208,17 @@ export default function AppointmentsPage() {
     try {
       await axios.patch(`${API}/appointments/${appointmentId}/status?status=${newStatus}`);
       toast.success("Status updated");
+      fetchAppointments();
     } catch (error) {
       const detail = error.response?.data?.detail;
       toast.error(detail || "Failed to update status");
       fetchAppointments(); // Revert on failure
     }
+  };
+
+  const getValidTargets = (currentStatus) => {
+    const targets = allowedTransitions[currentStatus] || [];
+    return targets.map((v) => ({ value: v, label: statusLabels[v] || v }));
   };
 
   const initiateDeposit = async (appointmentId) => {
@@ -116,27 +227,75 @@ export default function AppointmentsPage() {
         headers: { "x-origin": window.location.origin }
       });
       if (res.data.checkout_url) {
-        window.open(res.data.checkout_url, "_blank");
-        toast.success("Stripe checkout opened in new tab");
+        navigator.clipboard.writeText(res.data.checkout_url).then(() => {
+          toast.success("Deposit link copied to clipboard");
+        }).catch(() => { console.log("Deposit link:", res.data.checkout_url); });
       }
-    } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to create deposit link");
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create deposit link"); }
+  };
+
+  // Open modal and load data for dropdowns
+  const openNewModal = async () => {
+    setNewApt({ client_id: "", barber_id: "", service_id: "", date: null, time: "", notes: "" });
+    setClientSearch("");
+    setNewModalOpen(true);
+    try {
+      const [b, s, c] = await Promise.all([
+        axios.get(`${API}/barbers`),
+        axios.get(`${API}/services`),
+        axios.get(`${API}/clients?limit=200`),
+      ]);
+      setBarbers(b.data.barbers);
+      setServices(s.data.services);
+      setClients(c.data.clients);
+    } catch { toast.error("Failed to load data for booking"); }
+  };
+
+  const handleCreateAppointment = async () => {
+    if (!newApt.client_id || !newApt.barber_id || !newApt.service_id || !newApt.date || !newApt.time) {
+      toast.error("Please fill all required fields");
+      return;
     }
+    setSubmitting(true);
+    try {
+      const dateStr = format(newApt.date, "yyyy-MM-dd");
+      const scheduled_at = `${dateStr}T${newApt.time}:00`;
+      await axios.post(`${API}/appointments`, {
+        client_id: newApt.client_id,
+        barber_id: newApt.barber_id,
+        service_id: newApt.service_id,
+        scheduled_at,
+        notes: newApt.notes,
+      });
+      toast.success("Appointment created");
+      setNewModalOpen(false);
+      fetchAppointments();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create appointment"); }
+    finally { setSubmitting(false); }
   };
 
   const formatDateTime = (dateString) => {
     const date = new Date(dateString);
-    return {
-      date: format(date, "MMM d, yyyy"),
-      time: format(date, "h:mm a")
-    };
+    return { date: format(date, "MMM d, yyyy"), time: format(date, "h:mm a") };
   };
+
+  const filteredClients = clients.filter(c =>
+    !clientSearch || c.name.toLowerCase().includes(clientSearch.toLowerCase()) || c.phone.includes(clientSearch)
+  );
 
   const totalPages = Math.ceil(total / limit);
 
   return (
     <Layout title="Appointments">
       <div data-testid="appointments-page" className="space-y-6">
+        {/* Header with New Appointment */}
+        <div className="flex items-center justify-between">
+          <div />
+          <Button onClick={openNewModal} data-testid="new-appointment-btn" className="gap-2">
+            <Plus className="w-4 h-4" /> New Appointment
+          </Button>
+        </div>
+
         {/* Filters */}
         <Card className="bg-card border-border">
           <CardContent className="p-4">
@@ -145,52 +304,32 @@ export default function AppointmentsPage() {
                 <Filter className="w-4 h-4 text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">Filters:</span>
               </div>
-              
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
+
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(0); }}>
                 <SelectTrigger className="w-48 bg-input/50" data-testid="status-filter">
                   <SelectValue placeholder="Filter by status" />
                 </SelectTrigger>
                 <SelectContent>
                   {statusOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
 
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    data-testid="date-filter"
-                    className={`w-48 justify-start text-left font-normal ${
-                      !dateFilter && "text-muted-foreground"
-                    }`}
-                  >
+                  <Button variant="outline" data-testid="date-filter" className={`w-48 justify-start text-left font-normal ${!dateFilter && "text-muted-foreground"}`}>
                     <CalendarIcon className="mr-2 h-4 w-4" />
                     {dateFilter ? format(dateFilter, "PPP") : "Pick a date"}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={dateFilter}
-                    onSelect={setDateFilter}
-                    initialFocus
-                  />
+                  <Calendar mode="single" selected={dateFilter} onSelect={(d) => { setDateFilter(d); setPage(0); }} initialFocus />
                 </PopoverContent>
               </Popover>
 
               {(statusFilter !== "all" || dateFilter) && (
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setStatusFilter("all");
-                    setDateFilter(null);
-                  }}
-                  className="text-muted-foreground"
-                >
+                <Button variant="ghost" onClick={() => { setStatusFilter("all"); setDateFilter(null); setPage(0); }} className="text-muted-foreground">
                   Clear filters
                 </Button>
               )}
@@ -198,7 +337,7 @@ export default function AppointmentsPage() {
           </CardContent>
         </Card>
 
-        {/* Appointments Table */}
+        {/* Table */}
         <Card className="bg-card border-border">
           <CardContent className="p-0">
             <Table>
@@ -217,99 +356,80 @@ export default function AppointmentsPage() {
                 {loading ? (
                   [...Array(5)].map((_, i) => (
                     <TableRow key={i} className="border-border">
-                      <TableCell colSpan={7}>
-                        <div className="h-12 bg-muted/50 animate-pulse rounded" />
-                      </TableCell>
+                      <TableCell colSpan={7}><div className="h-12 bg-muted/50 animate-pulse rounded" /></TableCell>
                     </TableRow>
                   ))
                 ) : appointments.length === 0 ? (
                   <TableRow className="border-border">
-                    <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
-                      No appointments found
-                    </TableCell>
+                    <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">No appointments found</TableCell>
                   </TableRow>
-                ) : (
-                  appointments.map((apt) => {
-                    const { date, time } = formatDateTime(apt.scheduled_at);
-                    return (
-                      <TableRow 
-                        key={apt.id} 
-                        className="border-border hover:bg-accent/30"
-                        data-testid={`appointment-row-${apt.id}`}
-                      >
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <User className="w-4 h-4 text-muted-foreground" />
-                            <div>
-                              <p className="font-medium">{apt.client?.name || "Unknown"}</p>
-                              <p className="text-xs text-muted-foreground">{apt.client?.phone}</p>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Scissors className="w-4 h-4 text-muted-foreground" />
-                            {apt.service?.name || "Unknown"}
-                          </div>
-                        </TableCell>
-                        <TableCell>{apt.barber?.name || "Unknown"}</TableCell>
-                        <TableCell>
+                ) : appointments.map((apt) => {
+                  const { date, time } = formatDateTime(apt.scheduled_at);
+                  const validTargets = getValidTargets(apt.status);
+                  return (
+                    <TableRow key={apt.id} className="border-border hover:bg-accent/30" data-testid={`appointment-row-${apt.id}`}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <User className="w-4 h-4 text-muted-foreground" />
                           <div>
-                            <p className="font-medium">{date}</p>
-                            <p className="text-sm text-muted-foreground flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {time}
-                            </p>
+                            <p className="font-medium">{apt.client?.name || "Unknown"}</p>
+                            <p className="text-xs text-muted-foreground">{apt.client?.phone}</p>
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge className={`${statusColors[apt.status] || "bg-secondary"}`}>
-                            {apt.status.replace(/_/g, " ")}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Scissors className="w-4 h-4 text-muted-foreground" />
+                          {apt.service?.name || "Unknown"}
+                        </div>
+                      </TableCell>
+                      <TableCell>{apt.barber?.name || "Unknown"}</TableCell>
+                      <TableCell>
+                        <div>
+                          <p className="font-medium">{date}</p>
+                          <p className="text-sm text-muted-foreground flex items-center gap-1">
+                            <Clock className="w-3 h-3" />{time}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={`${statusColors[apt.status] || "bg-secondary"}`}>{apt.status.replace(/_/g, " ")}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {apt.deposit_required ? (
+                          <Badge className={apt.deposit_paid ? "bg-emerald-500/20 text-emerald-400" : "bg-orange-500/20 text-orange-400"}>
+                            ${apt.deposit_amount} {apt.deposit_paid ? "Paid" : "Pending"}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {apt.deposit_required ? (
-                            <Badge className={apt.deposit_paid ? "bg-emerald-500/20 text-emerald-400" : "bg-orange-500/20 text-orange-400"}>
-                              ${apt.deposit_amount} {apt.deposit_paid ? "Paid" : "Pending"}
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
+                        ) : <span className="text-muted-foreground">-</span>}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {(apt.status === "deposit_pending" || (apt.status === "pending" && apt.deposit_required && !apt.deposit_paid)) && (
+                            <Button variant="outline" size="sm"
+                              className="h-8 text-xs gap-1 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                              onClick={() => initiateDeposit(apt.id)} data-testid={`send-deposit-link-btn-${apt.id}`}>
+                              <CreditCard className="w-3 h-3" /> Send Deposit Link
+                            </Button>
                           )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            {(apt.status === "deposit_pending" || (apt.status === "pending" && apt.deposit_required && !apt.deposit_paid)) && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-xs gap-1 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
-                                onClick={() => initiateDeposit(apt.id)}
-                                data-testid={`pay-deposit-btn-${apt.id}`}
-                              >
-                                <CreditCard className="w-3 h-3" /> Pay Deposit
-                              </Button>
-                            )}
-                            <Select
-                              value={apt.status}
-                              onValueChange={(value) => updateStatus(apt.id, value)}
-                            >
-                              <SelectTrigger className="w-32 h-8 text-xs">
-                                <SelectValue />
+                          {validTargets.length > 0 ? (
+                            <Select value="" onValueChange={(value) => updateStatus(apt.id, value)}>
+                              <SelectTrigger className="w-36 h-8 text-xs" data-testid={`status-action-${apt.id}`}>
+                                <SelectValue placeholder="Change status" />
                               </SelectTrigger>
                               <SelectContent>
-                                {statusOptions.slice(1).map((option) => (
-                                  <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </SelectItem>
+                                {validTargets.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
+                          ) : (
+                            <span className="text-xs text-muted-foreground">No actions</span>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
@@ -322,28 +442,102 @@ export default function AppointmentsPage() {
               Showing {page * limit + 1} to {Math.min((page + 1) * limit, total)} of {total} appointments
             </p>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0}
-              >
+              <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
                 <ChevronLeft className="w-4 h-4" />
               </Button>
-              <span className="text-sm">
-                Page {page + 1} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
-              >
+              <span className="text-sm">Page {page + 1} of {totalPages}</span>
+              <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}>
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
           </div>
         )}
+
+        {/* ===== NEW APPOINTMENT DIALOG ===== */}
+        <Dialog open={newModalOpen} onOpenChange={setNewModalOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>New Appointment</DialogTitle>
+              <DialogDescription>Book a walk-in or phone appointment for a client.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2 max-h-[60vh] overflow-y-auto">
+              {/* Client */}
+              <div>
+                <Label>Client *</Label>
+                <Input placeholder="Search clients..." value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} data-testid="client-search-input" className="mb-2" />
+                <Select value={newApt.client_id} onValueChange={(v) => setNewApt({ ...newApt, client_id: v })}>
+                  <SelectTrigger data-testid="client-select"><SelectValue placeholder="Select client" /></SelectTrigger>
+                  <SelectContent>
+                    {filteredClients.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name} — {c.phone}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Barber */}
+              <div>
+                <Label>Barber *</Label>
+                <Select value={newApt.barber_id} onValueChange={(v) => setNewApt({ ...newApt, barber_id: v })}>
+                  <SelectTrigger data-testid="barber-select"><SelectValue placeholder="Select barber" /></SelectTrigger>
+                  <SelectContent>
+                    {barbers.map((b) => (<SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Service */}
+              <div>
+                <Label>Service *</Label>
+                <Select value={newApt.service_id} onValueChange={(v) => setNewApt({ ...newApt, service_id: v })}>
+                  <SelectTrigger data-testid="service-select"><SelectValue placeholder="Select service" /></SelectTrigger>
+                  <SelectContent>
+                    {services.map((s) => (<SelectItem key={s.id} value={s.id}>{s.name} — ${s.price}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Date */}
+              <div>
+                <Label>Date *</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" data-testid="apt-date-picker" className={`w-full justify-start text-left font-normal ${!newApt.date && "text-muted-foreground"}`}>
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {newApt.date ? format(newApt.date, "PPP") : "Select date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar mode="single" selected={newApt.date} onSelect={(d) => setNewApt({ ...newApt, date: d })} initialFocus />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              {/* Time */}
+              <div>
+                <Label>Time *</Label>
+                <Select value={newApt.time} onValueChange={(v) => setNewApt({ ...newApt, time: v })}>
+                  <SelectTrigger data-testid="apt-time-select"><SelectValue placeholder="Select time" /></SelectTrigger>
+                  <SelectContent>
+                    {timeSlots.map((t) => (<SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <Label>Notes</Label>
+                <Textarea data-testid="apt-notes-input" value={newApt.notes} onChange={(e) => setNewApt({ ...newApt, notes: e.target.value })} placeholder="Optional notes..." rows={2} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setNewModalOpen(false)}>Cancel</Button>
+              <Button onClick={handleCreateAppointment} disabled={submitting} data-testid="create-appointment-btn">
+                {submitting ? "Creating..." : "Create Appointment"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </Layout>
   );
