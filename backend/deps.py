@@ -75,37 +75,29 @@ _rate_limit_store: Dict[str, List[float]] = {}
 _rate_limit_windows: Dict[str, int] = {}
 
 
-def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
-    """Returns True if request is allowed, False if rate limited."""
-    now = time.time()
-    if key not in _rate_limit_store:
-        _rate_limit_store[key] = []
-        _rate_limit_windows[key] = window_seconds
-    elif key not in _rate_limit_windows:
-        _rate_limit_windows[key] = window_seconds
-    # Remove expired entries
-    _rate_limit_store[key] = [t for t in _rate_limit_store[key] if now - t < window_seconds]
-    if not _rate_limit_store[key]:
-        del _rate_limit_store[key]
-        _rate_limit_windows.pop(key, None)
-    if key not in _rate_limit_store:
-        _rate_limit_store[key] = [now]
-        _rate_limit_windows[key] = window_seconds
-        return True
-    if len(_rate_limit_store[key]) >= max_requests:
+async def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
+    """Returns True if request is allowed, False if rate limited.
+    
+    Uses MongoDB so rate limits are shared across multiple workers.
+    Expired entries are cleaned up automatically via a TTL index on
+    the ``rate_limit_entries`` collection (created at startup).
+    """
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(seconds=window_seconds)
+    
+    count = await db.rate_limit_entries.count_documents({
+        "key": key,
+        "timestamp": {"$gte": window_start},
+    })
+    
+    if count >= max_requests:
         return False
-    _rate_limit_store[key].append(now)
-
-    # Periodic cleanup
-    if len(_rate_limit_store) > 10000:
-        stale_keys = [
-            k for k, timestamps in _rate_limit_store.items()
-            if all(now - t > _rate_limit_windows.get(k, window_seconds) for t in timestamps)
-        ]
-        for k in stale_keys:
-            del _rate_limit_store[k]
-            _rate_limit_windows.pop(k, None)
-
+    
+    await db.rate_limit_entries.insert_one({
+        "key": key,
+        "timestamp": now,
+        "expires_at": now + timedelta(seconds=window_seconds),
+    })
     return True
 
 
