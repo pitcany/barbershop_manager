@@ -3,6 +3,7 @@ Provider factory - creates the appropriate provider based on environment config
 """
 import os
 import logging
+import threading
 from typing import Optional
 
 from .interfaces import SMSProvider, CalendarProvider, EmailProvider, PaymentProvider
@@ -97,7 +98,8 @@ def get_payment_provider(webhook_url: str = "") -> PaymentProvider:
     return MockPaymentProvider()
 
 
-# Singleton instances (initialized lazily)
+# Singleton instances (initialized lazily, guarded by lock)
+_provider_lock = threading.Lock()
 _sms_provider: Optional[SMSProvider] = None
 _calendar_provider: Optional[CalendarProvider] = None
 _email_provider: Optional[EmailProvider] = None
@@ -107,35 +109,44 @@ _payment_provider: Optional[PaymentProvider] = None
 def get_sms() -> SMSProvider:
     global _sms_provider
     if _sms_provider is None:
-        _sms_provider = get_sms_provider()
+        with _provider_lock:
+            if _sms_provider is None:
+                _sms_provider = get_sms_provider()
     return _sms_provider
 
 
 def get_calendar(db=None) -> CalendarProvider:
     global _calendar_provider
     if _calendar_provider is None:
-        _calendar_provider = get_calendar_provider(db)
+        with _provider_lock:
+            if _calendar_provider is None:
+                _calendar_provider = get_calendar_provider(db)
     return _calendar_provider
 
 
 def get_email(db=None) -> EmailProvider:
     global _email_provider
     if _email_provider is None:
-        _email_provider = get_email_provider(db)
+        with _provider_lock:
+            if _email_provider is None:
+                _email_provider = get_email_provider(db)
     return _email_provider
 
 
 def get_payment(webhook_url: str = "") -> PaymentProvider:
     global _payment_provider
     if _payment_provider is None:
-        _payment_provider = get_payment_provider(webhook_url)
+        with _provider_lock:
+            if _payment_provider is None:
+                _payment_provider = get_payment_provider(webhook_url)
     return _payment_provider
 
 
 def reset_providers():
     """Reset all providers (useful for testing)"""
     global _sms_provider, _calendar_provider, _email_provider, _payment_provider
-    _sms_provider = None
-    _calendar_provider = None
-    _email_provider = None
-    _payment_provider = None
+    with _provider_lock:
+        _sms_provider = None
+        _calendar_provider = None
+        _email_provider = None
+        _payment_provider = None

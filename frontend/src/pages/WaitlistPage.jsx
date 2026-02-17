@@ -130,12 +130,13 @@ export default function WaitlistPage() {
   };
 
   const removeFromWaitlist = async (entryId) => {
+    setWaitlist(prev => prev.filter(entry => entry.id !== entryId));
     try {
       await axios.delete(`${API}/waitlist/${entryId}`);
       toast.success("Removed from waitlist");
-      fetchWaitlist();
     } catch (error) {
       toast.error("Failed to remove from waitlist");
+      fetchWaitlist(); // Revert on failure
     }
   };
 

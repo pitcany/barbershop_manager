@@ -9,54 +9,68 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 - **Auth**: JWT + bcrypt
 - **External Services**: Provider abstraction (real/mock) for Twilio, Stripe, SendGrid, Google Calendar
 
-## Agent System
-| Agent | Status | Description |
-|-------|--------|-------------|
-| FrontDeskAgent | Active | Handles inbound SMS, booking, template responses |
-| NoShowEnforcementAgent | Active | Deposit requests, no-show detection |
-| WaitlistFillAgent | Active | Finds matches, contacts waitlist clients |
-| OwnerOpsAgent | Active | Daily summary emails to shop owner |
-| RetentionRebookAgent | Active | Re-engages lapsed clients via email/SMS |
-
-## Background Jobs (APScheduler)
-| Job | Schedule | Description |
-|-----|----------|-------------|
-| Appointment Reminders | Every hour | SMS reminders for upcoming appointments |
-| Daily Summary Email | Daily 20:00 UTC | Operational summary to shop owner |
-| Client Retention Sweep | Daily 14:00 UTC | Email/SMS outreach to lapsed clients |
+### Code Structure
+```
+/app/backend/
+  server.py          # Slim entry point: app, CORS, startup, seed
+  deps.py            # Shared: db, auth, rate limiting
+  models.py          # Pydantic models
+  routes/
+    auth.py          # Auth, shop details CRUD, dashboard, barbers CRUD, services CRUD, today-schedule
+    appointments.py  # Appointment CRUD, scheduling, availability
+    clients.py       # Clients, conversations, waitlist
+    payments.py      # Stripe payments
+    calendar.py      # Google Calendar OAuth, events
+    jobs.py          # Scheduler jobs, reporting, audit, retention
+    public.py        # Public booking portal + SMS consent + shop info
+    webhooks.py      # Twilio + Stripe webhooks
+  providers/         # Provider abstraction (interfaces, mock, real)
+  agents/            # Business logic agents
+  scheduler.py       # APScheduler config
+/app/frontend/src/
+  pages/
+    DashboardPage.jsx          # Dashboard with Today's Schedule + Booking Link
+    AppointmentsPage.jsx       # Appointments list + New Appointment modal
+    ManagePage.jsx             # Barber & Service CRUD management
+    SettingsPage.jsx           # Editable shop details, policies, booking link, integrations
+    ClientsPage.jsx            # Client list (no MongoDB IDs)
+    BookingPage.jsx            # Public self-service booking wizard
+    BookingConfirmationPage.jsx
+    + other admin pages...
+  components/layout/Layout.jsx  # Sidebar navigation
+```
 
 ## What's Been Implemented
 
-### Phase 1: MVP Core (Feb 6)
-- [x] All database models + provider abstraction layer
-- [x] Agent system (FrontDesk, NoShow, Waitlist)
-- [x] Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
-- [x] SMS compliance, audit logging, revenue recovery tracking
+### Phase 1-5: Core MVP through RetentionRebookAgent
+- All database models + provider abstraction layer
+- Agent system (FrontDesk, NoShow, Waitlist, OwnerOps, RetentionRebook)
+- Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
+- SMS compliance, audit logging, revenue recovery tracking
+- Scheduling Engine with conflict prevention
+- Client Management Dashboard, APScheduler background jobs, Reporting + Jobs dashboards
 
-### Phase 2: High-Impact Enhancements (Feb 12)
-- [x] Scheduling Engine with conflict prevention
-- [x] Client Management Dashboard (search, create, history, booking)
-- [x] Real-Time Conversations with live polling
+### Phase 6: Stripe & Google Calendar Integrations
+- **Stripe Payments (REAL)**: Checkout sessions, transactions, status polling, webhook
+- **Google Calendar (REAL OAuth2)**: OAuth flow, token storage/refresh, event CRUD
 
-### Phase 3: Background Tasks & OwnerOpsAgent (Feb 12)
-- [x] APScheduler: hourly reminders + daily summary + retention sweep
-- [x] OwnerOpsAgent: daily HTML summary email to shop owner
+### Phase 7: server.py Refactor
+- Decomposed 2,555-line monolith into 8 route modules + shared deps.py
 
-### Phase 4: Dashboards (Feb 12)
-- [x] Reporting Dashboard: KPIs, charts, barber performance, recovery events
-- [x] Jobs Dashboard: scheduler status, run/preview, execution history
+### Phase 8: Client Self-Service Booking Portal
+- Public booking wizard at `/book`, smart deposit enforcement, Stripe checkout, calendar sync
 
-### Phase 5: RetentionRebookAgent (Feb 12)
-- [x] Multi-touch escalation: email touch 1 (friendly), touch 2 (warmer), SMS touch 3 (high-signal only)
-- [x] Configurable lapse threshold + cooldown period in Settings
-- [x] Outreach history tracking + cooldown enforcement
-- [x] Scheduled daily sweep at 14:00 UTC
+### Phase 9: Manager Workflow P0 Fixes (Feb 12, 2026)
+- "New Appointment" button on Appointments page
+- Barber & Service Management page at `/manage` with full CRUD
+- "Today's Schedule" timeline on Dashboard
+- 100% test pass rate (26 backend + all frontend)
 
-### Phase 6: Stripe & Google Calendar Integrations (Feb 12)
-- [x] **Stripe Payments (REAL)**: Checkout sessions via emergentintegrations, payment_transactions collection, status polling, webhook handler
-- [x] **Google Calendar (REAL OAuth2)**: OAuth flow (login/callback), token storage/refresh, event CRUD (create on booking, delete on cancel), freebusy availability
-- [x] Frontend: Pay Deposit button, Payment Success/Cancel pages, Integrations status in Settings
-- [x] Calendar sync: new appointments auto-create Google Calendar events, cancellations auto-delete events
+### Phase 10: P1 Improvements (Feb 12, 2026) — JUST COMPLETED
+- **Editable shop details** in Settings (name, phone, email, address) via PATCH /api/shop/details
+- **Shareable booking link** in Settings + Dashboard with copy-to-clipboard
+- **Removed MongoDB IDs** from client list — shows appointment count instead
+- 100% test pass rate (11 backend + all frontend)
 
 ## Integration Status
 | Service | Status | Details |
@@ -71,26 +85,13 @@ Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and
 ### P1 (Next)
 - [ ] Enable Twilio for real SMS (pending credentials)
 - [ ] Migrate APScheduler to Celery+Redis for production
+- [ ] Billing infrastructure (Stripe Connect for platform fee on deposits)
 
 ### P2 (Future)
-- [ ] Client self-service portal (confirm/reschedule via link)
 - [ ] Migrate MongoDB to PostgreSQL
-- [ ] Refactor server.py into modular route files
 - [ ] Multi-shop support
-
-## Key API Endpoints (New)
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| /api/payments/create-deposit/{id} | POST | Create Stripe checkout for appointment deposit |
-| /api/payments/status/{session_id} | GET | Poll Stripe payment status |
-| /api/payments/transactions | GET | List all payment transactions |
-| /api/webhooks/stripe | POST | Stripe webhook handler |
-| /api/oauth/calendar/login | GET | Initiate Google Calendar OAuth |
-| /api/oauth/calendar/callback | GET | Handle OAuth callback |
-| /api/calendar/status | GET | Check calendar connection |
-| /api/calendar/disconnect | POST | Disconnect calendar |
-| /api/calendar/events | GET | List calendar events |
 
 ## Credentials
 - **Admin**: username=admin, password=admin123
-- **Preview**: https://booking-recovery.preview.emergentagent.com
+- **Public Booking**: /book
+- **Admin Dashboard**: /login

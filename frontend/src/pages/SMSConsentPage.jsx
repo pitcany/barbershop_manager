@@ -5,7 +5,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Checkbox } from "../components/ui/checkbox";
-import { toast, Toaster } from "sonner";
+import { toast } from "sonner";
 import { Scissors, Phone, User, CheckCircle, MessageSquare } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -82,7 +82,6 @@ export default function SMSConsentPage() {
         className="min-h-screen flex items-center justify-center p-4"
         style={{ backgroundColor: '#09090b' }}
       >
-        <Toaster position="top-right" richColors />
         <Card className="w-full max-w-md bg-card border-border text-center">
           <CardContent className="p-8">
             <div className="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -110,12 +109,11 @@ export default function SMSConsentPage() {
     <div 
       className="min-h-screen flex items-center justify-center p-4"
       style={{
-        backgroundImage: `linear-gradient(to bottom, rgba(9, 9, 11, 0.9), rgba(9, 9, 11, 0.98)), url('https://images.unsplash.com/photo-1758887260983-c171388cf56f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxiYXJiZXIlMjB0b29scyUyMHNjaXNzb3JzJTIwY2xpcHBlcnN8ZW58MHx8fHwxNzcwNDA0NTA3fDA&ixlib=rb-4.1.0&q=85')`,
+        backgroundImage: `linear-gradient(to bottom, rgba(9, 9, 11, 0.9), rgba(9, 9, 11, 0.98)), url('https://images.unsplash.com/photo-1758887260983-c171388cf56f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxiYXJiZXIlMjB0b29scyUyMHNjaXNzb3JzJTIwY2xpcHBlcnN8ZW58MHx8fHwxNzcwNDA0NTA3fDA&ixlib=rb-4.1.0&w=1280&q=60&fm=webp')`,
         backgroundSize: 'cover',
         backgroundPosition: 'center'
       }}
     >
-      <Toaster position="top-right" richColors />
       <Card className="w-full max-w-md bg-card/95 backdrop-blur-sm border-border">
         <CardHeader className="text-center space-y-4">
           <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
