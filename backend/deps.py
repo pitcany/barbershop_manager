@@ -26,7 +26,7 @@ _client = AsyncIOMotorClient(mongo_url)
 db = _client[os.environ.get('DB_NAME', 'barbershop_autopilot')]
 
 # Auth configuration
-SECRET_KEY = os.environ.get('JWT_SECRET')
+SECRET_KEY = os.environ.get('JWT_SECRET', 'barbershop-autopilot-secret-key-change-in-production')
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 

@@ -81,7 +81,7 @@ async def public_book_appointment(request: Request):
     """Public booking endpoint — creates appointment + returns deposit checkout if needed"""
     raw_request = request
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"public-book:{client_ip}", max_requests=10, window_seconds=3600):
+    if not await check_rate_limit(f"public-book:{client_ip}", max_requests=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     body = await request.json()
@@ -309,7 +309,7 @@ async def get_public_appointment(appointment_id: str):
 @router.post("/public/sms-consent")
 async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
+    if not await check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     shop_data = await db.shops.find_one({}, {"_id": 0})
