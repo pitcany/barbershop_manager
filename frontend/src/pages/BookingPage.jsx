@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API } from "../App";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
@@ -16,6 +16,9 @@ const STEPS = ["service", "barber", "datetime", "info", "confirm"];
 
 export default function BookingPage() {
   const [searchParams] = useSearchParams();
+  const { shopSlug: urlSlug } = useParams();
+  const navigate = useNavigate();
+  const [shopSlug, setShopSlug] = useState(urlSlug || "");
   const [shop, setShop] = useState(null);
   const [services, setServices] = useState([]);
   const [barbers, setBarbers] = useState([]);
@@ -39,15 +42,23 @@ export default function BookingPage() {
     sms_consent: true,
   });
 
+  // Build API base path: slug-based when available, fallback otherwise
+  const publicBase = shopSlug ? `${API}/public/s/${shopSlug}` : `${API}/public`;
+
   useEffect(() => {
     Promise.all([
-      axios.get(`${API}/public/shop-info`),
-      axios.get(`${API}/public/services`),
-      axios.get(`${API}/public/barbers`),
+      axios.get(`${publicBase}/shop-info`),
+      axios.get(`${publicBase}/services`),
+      axios.get(`${publicBase}/barbers`),
     ]).then(([shopRes, svcRes, barberRes]) => {
       setShop(shopRes.data);
       setServices(svcRes.data.services || []);
       setBarbers(barberRes.data.barbers || []);
+      // If we didn't have a slug from URL, redirect to the slug-based URL
+      if (!urlSlug && shopRes.data.slug) {
+        setShopSlug(shopRes.data.slug);
+        navigate(`/book/${shopRes.data.slug}`, { replace: true });
+      }
     }).catch(() => setError("Unable to load booking info"))
       .finally(() => setLoading(false));
   }, []);
@@ -68,7 +79,7 @@ export default function BookingPage() {
         service_id: selected.service.id,
       });
       if (selected.barber) params.set("barber_id", selected.barber.id);
-      const res = await axios.get(`${API}/public/availability?${params}`);
+      const res = await axios.get(`${publicBase}/availability?${params}`);
       setSlots(res.data.slots || []);
     } catch {
       setSlots([]);
@@ -85,7 +96,7 @@ export default function BookingPage() {
     setBooking(true);
     setError("");
     try {
-      const res = await axios.post(`${API}/public/book`, {
+      const res = await axios.post(`${publicBase}/book`, {
         name: selected.name,
         phone: selected.phone,
         email: selected.email,

@@ -34,14 +34,24 @@ async def twilio_inbound_webhook(request: Request):
             raise HTTPException(status_code=403, detail="Invalid signature")
 
     from_number = form_data.get("From", "")
+    to_number = form_data.get("To", "")
     body = form_data.get("Body", "").strip()
 
     if not from_number or not body:
         return JSONResponse(content={"status": "ignored", "reason": "missing data"})
 
-    shop_data = await db.shops.find_one({}, {"_id": 0})
+    # Route to the correct shop by matching the Twilio "To" number
+    shop_data = None
+    if to_number:
+        shop_data = await db.shops.find_one({"phone": to_number}, {"_id": 0})
+    # Fallback: single-shop mode
     if not shop_data:
-        return JSONResponse(content={"status": "error", "reason": "no shop"})
+        count = await db.shops.count_documents({})
+        if count == 1:
+            shop_data = await db.shops.find_one({}, {"_id": 0})
+    if not shop_data:
+        logger.warning(f"No shop matched for inbound SMS to={to_number}")
+        return JSONResponse(content={"status": "error", "reason": "no shop matched for inbound number"})
 
     shop = Shop(**shop_data)
 

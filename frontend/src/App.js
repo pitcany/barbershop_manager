@@ -137,6 +137,9 @@ function App() {
               {/* Public Routes */}
               <Route path="/login" element={<LoginPage />} />
               <Route path="/sms-consent" element={<SMSConsentPage />} />
+              <Route path="/book/:shopSlug" element={<BookingPage />} />
+              <Route path="/book/:shopSlug/confirmation" element={<BookingConfirmationPage />} />
+              {/* Backward compat: /book without slug fetches slug from API */}
               <Route path="/book" element={<BookingPage />} />
               <Route path="/book/confirmation" element={<BookingConfirmationPage />} />
               <Route path="/payment/success" element={

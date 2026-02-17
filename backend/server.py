@@ -92,6 +92,11 @@ async def startup_event():
     await db.events.create_index([("shop_id", 1), ("created_at", -1)])
     await db.payments.create_index([("shop_id", 1), ("status", 1), ("payment_type", 1)])
 
+    # Unique index on shop slug for multi-tenancy
+    await db.shops.create_index("slug", unique=True)
+    # Index for Twilio webhook phone-based routing
+    await db.shops.create_index("phone", unique=True)
+
     # Check if shop exists
     shop_count = await db.shops.count_documents({})
     if shop_count == 0:
@@ -122,6 +127,7 @@ async def seed_demo_data():
 
     shop = {
         "id": shop_id,
+        "slug": "classic-cuts",
         "name": "Classic Cuts Barbershop",
         "phone": "+15551234567",
         "email": "info@classiccuts.local",
@@ -206,6 +212,7 @@ async def seed_demo_data():
         "shop_id": shop_id,
         "username": "admin",
         "password_hash": pwd_context.hash(admin_password),
+        "role": "super_admin",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.admin_users.insert_one(admin)

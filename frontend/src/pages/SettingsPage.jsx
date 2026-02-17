@@ -194,7 +194,8 @@ export default function SettingsPage() {
   };
 
   const copyBookingLink = () => {
-    const link = `${window.location.origin}/book`;
+    const slug = shop?.slug || "";
+    const link = slug ? `${window.location.origin}/book/${slug}` : `${window.location.origin}/book`;
     navigator.clipboard.writeText(link).then(() => toast.success("Booking link copied!")).catch(() => toast.error("Failed to copy"));
   };
 
@@ -292,7 +293,7 @@ export default function SettingsPage() {
           <CardContent>
             <div className="flex items-center gap-3 bg-zinc-800/50 rounded-lg p-4">
               <code data-testid="booking-link-display" className="flex-1 text-sm font-mono text-primary truncate">
-                {window.location.origin}/book
+                {window.location.origin}/book{shop?.slug ? `/${shop.slug}` : ""}
               </code>
               <Button onClick={copyBookingLink} data-testid="copy-booking-link-btn" variant="outline" size="sm" className="shrink-0 gap-2">
                 <Link2 className="w-4 h-4" /> Copy Link

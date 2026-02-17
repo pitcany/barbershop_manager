@@ -36,7 +36,7 @@ async def login(request: LoginRequest, raw_request: Request):
         {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
     )
 
-    token = create_access_token({"sub": admin["id"], "username": admin["username"], "shop_id": admin["shop_id"]})
+    token = create_access_token({"sub": admin["id"], "username": admin["username"], "shop_id": admin["shop_id"], "role": admin.get("role", "shop_admin")})
     return TokenResponse(access_token=token, token_type="bearer")
 
 
@@ -246,6 +246,11 @@ async def delete_service(service_id: str, shop: Shop = Depends(get_shop)):
 @router.patch("/shop/details")
 async def update_shop_details(body: UpdateShopDetailsRequest, shop: Shop = Depends(get_shop)):
     update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    # Ensure slug uniqueness if changing it
+    if "slug" in update_data and update_data["slug"] != shop.slug:
+        existing = await db.shops.find_one({"slug": update_data["slug"], "id": {"$ne": shop.id}}, {"_id": 0, "id": 1})
+        if existing:
+            raise HTTPException(status_code=409, detail="A shop with this slug already exists")
     if update_data:
         update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         await db.shops.update_one({"id": shop.id}, {"$set": update_data})
