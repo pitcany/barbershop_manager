@@ -50,8 +50,7 @@ async def twilio_inbound_webhook(request: Request):
         if len(fallback) == 1:
             shop_data = fallback[0]
     if not shop_data:
-        logger.warning(f"No shop matched for inbound SMS to={to_number}")
-        return JSONResponse(content={"status": "error", "reason": "no shop matched for inbound number"})
+        logger.warning("No shop matched for inbound SMS to=%s", to_number)
 
     shop = Shop(**shop_data)
 
