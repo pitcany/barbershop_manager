@@ -15,9 +15,18 @@ async def list_shops(user: dict = Depends(get_super_admin)):
     shops = await db.shops.find(
         {}, {"_id": 0}
     ).sort("created_at", -1).to_list(200)
-    # Attach admin count per shop
-    for shop in shops:
-        shop["admin_count"] = await db.admin_users.count_documents({"shop_id": shop["id"]})
+
+    # Batch admin counts in one aggregation instead of N+1 queries
+    if shops:
+        shop_ids = [s["id"] for s in shops]
+        counts = await db.admin_users.aggregate([
+            {"$match": {"shop_id": {"$in": shop_ids}}},
+            {"$group": {"_id": "$shop_id", "count": {"$sum": 1}}}
+        ]).to_list(len(shop_ids))
+        count_map = {c["_id"]: c["count"] for c in counts}
+        for shop in shops:
+            shop["admin_count"] = count_map.get(shop["id"], 0)
+
     return {"shops": shops}
 
 
@@ -71,7 +80,32 @@ async def create_shop(body: CreateShopRequest, user: dict = Depends(get_super_ad
 
 @router.patch("/admin/shops/{shop_id}")
 async def update_shop(shop_id: str, body: UpdateShopDetailsRequest, user: dict = Depends(get_super_admin)):
-async def update_shop(shop_id: str, body: "UpdateShopDetailsRequest", user: dict = Depends(get_super_admin)):
+    """Update a shop's details (super-admin only).
+
+    Uses UpdateShopDetailsRequest which validates slug format and phone format.
+    """
+    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+
+    if "slug" in update_data and update_data["slug"] != shop.get("slug"):
+        existing = await db.shops.find_one({"slug": update_data["slug"], "id": {"$ne": shop_id}}, {"_id": 0, "id": 1})
+        if existing:
+            raise HTTPException(status_code=409, detail="A shop with this slug already exists")
+
+    if "phone" in update_data and update_data["phone"] != shop.get("phone"):
+        existing = await db.shops.find_one({"phone": update_data["phone"], "id": {"$ne": shop_id}}, {"_id": 0, "id": 1})
+        if existing:
+            raise HTTPException(status_code=409, detail="A shop with this phone number already exists")
+
+    if update_data:
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.shops.update_one({"id": shop_id}, {"$set": update_data})
+
+    updated = await db.shops.find_one({"id": shop_id}, {"_id": 0})
+    return updated
 
 
 @router.post("/admin/shops/{shop_id}/admins")
