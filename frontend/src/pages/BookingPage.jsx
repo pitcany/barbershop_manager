@@ -46,10 +46,12 @@ export default function BookingPage() {
   const publicBase = shopSlug ? `${API}/public/s/${shopSlug}` : `${API}/public`;
 
   useEffect(() => {
+    // Compute base from URL param directly to avoid depending on mutable shopSlug state
+    const base = urlSlug ? `${API}/public/s/${urlSlug}` : `${API}/public`;
     Promise.all([
-      axios.get(`${publicBase}/shop-info`),
-      axios.get(`${publicBase}/services`),
-      axios.get(`${publicBase}/barbers`),
+      axios.get(`${base}/shop-info`),
+      axios.get(`${base}/services`),
+      axios.get(`${base}/barbers`),
     ]).then(([shopRes, svcRes, barberRes]) => {
       setShop(shopRes.data);
       setServices(svcRes.data.services || []);
@@ -61,7 +63,7 @@ export default function BookingPage() {
       }
     }).catch(() => setError("Unable to load booking info"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [urlSlug, navigate]);
 
   // Check for payment cancellation
   useEffect(() => {
