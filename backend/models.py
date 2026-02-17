@@ -579,19 +579,12 @@ class CreateShopRequest(BaseModel):
         return _validate_e164_phone(v)
 
 
-class CreateShopAdminRequest(BaseModel):
-    username: str
-    password: str
-
-    @field_validator("username")
+    @field_validator("password")
     @classmethod
-    def validate_username(cls, v):
-        if not v or not v.strip():
-            raise ValueError("Username must not be empty")
-        if len(v) > 200:
-            raise ValueError("Username must be 200 characters or fewer")
-        return v.strip()
-
+    def validate_password(cls, v):
+        if not v or len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
     @field_validator("password")
     @classmethod
     def validate_password(cls, v):
