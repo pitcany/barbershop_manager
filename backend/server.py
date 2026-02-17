@@ -93,9 +93,14 @@ async def startup_event():
     await db.payments.create_index([("shop_id", 1), ("status", 1), ("payment_type", 1)])
 
     # Unique index on shop slug for multi-tenancy
-    await db.shops.create_index("slug", unique=True)
+    # Use partial filter to skip docs with empty/missing slug (legacy shops)
+    await db.shops.create_index(
+        "slug", unique=True,
+        partialFilterExpression={"slug": {"$exists": True, "$gt": ""}}
+    )
     # Index for Twilio webhook phone-based routing
-    await db.shops.create_index("phone", unique=True)
+    # sparse=True so docs missing phone are excluded from uniqueness check
+    await db.shops.create_index("phone", unique=True, sparse=True)
 
     # Check if shop exists
     shop_count = await db.shops.count_documents({})

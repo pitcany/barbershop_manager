@@ -43,7 +43,7 @@ async def create_shop(body: CreateShopRequest, user: dict = Depends(get_super_ad
         "phone": body.phone,
         "email": body.email or "",
         "address": body.address or "",
-        "timezone": "America/New_York",
+        "timezone": body.timezone,
         "business_hours": {
             "monday": {"open": "09:00", "close": "18:00"},
             "tuesday": {"open": "09:00", "close": "18:00"},

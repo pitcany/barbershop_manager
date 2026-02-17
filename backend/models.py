@@ -564,6 +564,7 @@ class CreateShopRequest(BaseModel):
     phone: str
     email: Optional[str] = None
     address: Optional[str] = None
+    timezone: str = "America/New_York"
 
     @field_validator("slug")
     @classmethod

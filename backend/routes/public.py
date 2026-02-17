@@ -85,9 +85,8 @@ async def get_public_availability_by_slug(
     return {"slots": [s.to_dict() for s in slots], "date": date}
 
 
-@router.post("/public/s/{shop_slug}/book")
-async def public_book_appointment_by_slug(shop_slug: str, request: Request):
-    """Public booking endpoint — creates appointment + returns deposit checkout if needed"""
+async def _do_book_appointment(shop: Shop, shop_slug: str, request: Request):
+    """Core booking logic shared by slug-based and backward-compat endpoints."""
     raw_request = request
     client_ip = raw_request.client.host if raw_request.client else "unknown"
     if not await check_rate_limit(f"public-book:{client_ip}", max_requests=10, window_seconds=3600):
@@ -105,8 +104,6 @@ async def public_book_appointment_by_slug(shop_slug: str, request: Request):
 
     if not name or not phone or not barber_id or not service_id or not scheduled_at:
         raise HTTPException(status_code=400, detail="Missing required fields: name, phone, barber_id, service_id, scheduled_at")
-
-    shop = await _get_shop_by_slug(shop_slug)
 
     # Validate barber and service
     barber = await db.barbers.find_one({"id": barber_id, "shop_id": shop.id, "active": True}, {"_id": 0})
@@ -294,6 +291,13 @@ async def public_book_appointment_by_slug(shop_slug: str, request: Request):
     return result
 
 
+@router.post("/public/s/{shop_slug}/book")
+async def public_book_appointment_by_slug(shop_slug: str, request: Request):
+    """Public booking endpoint — creates appointment + returns deposit checkout if needed"""
+    shop = await _get_shop_by_slug(shop_slug)
+    return await _do_book_appointment(shop, shop_slug, request)
+
+
 @router.get("/public/appointment/{appointment_id}")
 async def get_public_appointment(appointment_id: str):
     """Get appointment status (public, for confirmation page)"""
@@ -314,13 +318,11 @@ async def get_public_appointment(appointment_id: str):
     return apt
 
 
-@router.post("/public/s/{shop_slug}/sms-consent")
-async def submit_sms_consent_by_slug(shop_slug: str, request: SMSConsentRequest, raw_request: Request):
+async def _do_submit_sms_consent(shop: Shop, request: SMSConsentRequest, raw_request: Request):
+    """Core SMS consent logic shared by slug-based and backward-compat endpoints."""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
     if not await check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
-
-    shop = await _get_shop_by_slug(shop_slug)
 
     client_data = await db.clients.find_one({"shop_id": shop.id, "phone": request.phone}, {"_id": 0})
     consent_timestamp = datetime.now(timezone.utc).isoformat() if request.consent else None
@@ -354,6 +356,12 @@ async def submit_sms_consent_by_slug(shop_slug: str, request: SMSConsentRequest,
         await db.clients.insert_one(client_data)
 
     return {"message": "Consent recorded", "consent": request.consent}
+
+
+@router.post("/public/s/{shop_slug}/sms-consent")
+async def submit_sms_consent_by_slug(shop_slug: str, request: SMSConsentRequest, raw_request: Request):
+    shop = await _get_shop_by_slug(shop_slug)
+    return await _do_submit_sms_consent(shop, request, raw_request)
 
 
 # ==================== BACKWARD-COMPAT (single-shop fallback) ====================
@@ -407,12 +415,12 @@ async def get_public_availability(
 
 @router.post("/public/book")
 async def public_book_appointment(request: Request):
-    """Backward-compat: redirect to slug-based booking when single shop"""
+    """Backward-compat: delegate to shared booking logic when single shop"""
     shop = await _get_single_shop()
-    return await public_book_appointment_by_slug(shop.slug, request)
+    return await _do_book_appointment(shop, shop.slug, request)
 
 
 @router.post("/public/sms-consent")
 async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
     shop = await _get_single_shop()
-    return await submit_sms_consent_by_slug(shop.slug, request, raw_request)
+    return await _do_submit_sms_consent(shop, request, raw_request)
