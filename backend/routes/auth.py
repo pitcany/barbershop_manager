@@ -23,7 +23,7 @@ router = APIRouter()
 @router.post("/auth/login", response_model=TokenResponse)
 async def login(request: LoginRequest, raw_request: Request):
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not await check_rate_limit(f"login:{client_ip}", max_requests=10, window_seconds=300):
+    if not await check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
 
     admin = await db.admin_users.find_one({"username": request.username}, {"_id": 0})

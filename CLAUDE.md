@@ -44,7 +44,8 @@ yarn start
 ```
 barbershop_manager/
 ├── backend/
-│   ├── server.py              # FastAPI app — all routes, auth, startup seed (1200 lines)
+│   ├── server.py              # FastAPI app — middleware, startup/shutdown, seed data
+│   ├── deps.py                # Shared dependencies: db, auth, rate limiting
 │   ├── models.py              # Pydantic models, enums, DTOs
 │   ├── agents.py              # Business logic: FrontDesk, NoShowEnforcement, WaitlistFill
 │   ├── sms_compliance.py      # SMS consent enforcement, opt-out handling
@@ -52,6 +53,16 @@ barbershop_manager/
 │   ├── revenue_logger.py      # Internal revenue attribution tracking
 │   ├── scheduled_jobs.py      # Appointment reminder job (cron-compatible)
 │   ├── requirements.txt       # Python dependencies
+│   ├── routes/
+│   │   ├── __init__.py        # Collects all sub-routers into all_routers list
+│   │   ├── auth.py            # Auth, shop, dashboard, barbers, services, health
+│   │   ├── appointments.py    # Appointment CRUD and status updates
+│   │   ├── clients.py         # Client listing and search
+│   │   ├── payments.py        # Payment and deposit endpoints
+│   │   ├── calendar.py        # Calendar integration endpoints
+│   │   ├── jobs.py            # Scheduled job triggers
+│   │   ├── public.py          # Public endpoints (no auth): booking, consent, availability
+│   │   └── webhooks.py        # Twilio inbound SMS + Stripe webhook handlers
 │   └── providers/
 │       ├── __init__.py        # Provider factory + singleton getters
 │       ├── interfaces.py      # Abstract base classes (SMS, Calendar, Email, Payment)
@@ -103,7 +114,9 @@ All external side effects are logged to the `integration_audit_log` collection f
 
 | Module | Location | Purpose |
 |--------|----------|---------|
-| Routes & Auth | `backend/server.py` | All API endpoints, JWT auth, CORS, startup seed |
+| App Entry Point | `backend/server.py` | FastAPI app, CORS, startup/shutdown, seed data |
+| Shared Deps | `backend/deps.py` | DB connection, JWT auth, rate limiting, query utilities |
+| Route Modules | `backend/routes/*.py` | API endpoints split by domain (auth, appointments, clients, etc.) |
 | Data Models | `backend/models.py` | Pydantic models, enums (AppointmentStatus has 8 states) |
 | SMS Compliance | `backend/sms_compliance.py` | Consent checks, STOP/opt-out handling, compliant sending |
 | Audit Logger | `backend/audit.py` | Logs all external API calls (never blocks main operations) |
@@ -146,7 +159,7 @@ All external side effects are logged to the `integration_audit_log` collection f
 
 ### Key Patterns
 
-- **All routes in one file**: `server.py` contains all API endpoints (not split into route modules)
+- **Modular routes**: API endpoints live in `backend/routes/*.py`, registered via `routes/__init__.py`; `server.py` is the slim entry point (app, middleware, startup, seed)
 - **UUID string IDs**: `str(uuid.uuid4())` instead of MongoDB ObjectIds
 - **ISO timestamp strings**: Dates stored as ISO strings, not datetime objects
 - **Projection excludes _id**: All MongoDB queries use `{"_id": 0}`
