@@ -71,32 +71,7 @@ async def create_shop(body: CreateShopRequest, user: dict = Depends(get_super_ad
 
 @router.patch("/admin/shops/{shop_id}")
 async def update_shop(shop_id: str, body: UpdateShopDetailsRequest, user: dict = Depends(get_super_admin)):
-    """Update a shop's details (super-admin only).
-
-    Uses UpdateShopDetailsRequest which validates slug format and phone format.
-    """
-    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
-    if not shop:
-        raise HTTPException(status_code=404, detail="Shop not found")
-
-    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
-
-    if "slug" in update_data and update_data["slug"] != shop.get("slug"):
-        existing = await db.shops.find_one({"slug": update_data["slug"], "id": {"$ne": shop_id}}, {"_id": 0, "id": 1})
-        if existing:
-            raise HTTPException(status_code=409, detail="A shop with this slug already exists")
-
-    if "phone" in update_data and update_data["phone"] != shop.get("phone"):
-        existing = await db.shops.find_one({"phone": update_data["phone"], "id": {"$ne": shop_id}}, {"_id": 0, "id": 1})
-        if existing:
-            raise HTTPException(status_code=409, detail="A shop with this phone number already exists")
-
-    if update_data:
-        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        await db.shops.update_one({"id": shop_id}, {"$set": update_data})
-
-    updated = await db.shops.find_one({"id": shop_id}, {"_id": 0})
-    return updated
+async def update_shop(shop_id: str, body: "UpdateShopDetailsRequest", user: dict = Depends(get_super_admin)):
 
 
 @router.post("/admin/shops/{shop_id}/admins")
