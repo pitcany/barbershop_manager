@@ -571,7 +571,6 @@ class CreateShopRequest(BaseModel):
     def validate_slug(cls, v):
         v = v.strip().lower()
         if not re.match(r'^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$', v):
-            raise ValueError("Slug must be 3-50 chars, lowercase alphanumeric and hyphens, cannot start/end with hyphen")
         return v
 
     @field_validator("phone")
