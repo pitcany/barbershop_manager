@@ -79,7 +79,7 @@ class Shop(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str = Field(default_factory=generate_id)
-    slug: str  # URL-safe identifier for public routes (e.g., "classic-cuts")
+    slug: str = ""  # URL-safe identifier for public routes (e.g., "classic-cuts")
     name: str
     phone: str  # Shop's Twilio number
     email: Optional[str] = None
@@ -484,6 +484,13 @@ class UpdateShopDetailsRequest(BaseModel):
                 raise ValueError("Slug must be 3-50 chars, lowercase alphanumeric and hyphens, cannot start/end with hyphen")
         return v
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v):
+        if v is not None:
+            return _validate_e164_phone(v)
+        return v
+
 
 class CreateClientRequest(BaseModel):
     name: str
@@ -584,6 +591,15 @@ class CreateShopAdminRequest(BaseModel):
         if len(v) > 200:
             raise ValueError("Username must be 200 characters or fewer")
         return v.strip()
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        if not v or len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if len(v) > 128:
+            raise ValueError("Password must be 128 characters or fewer")
+        return v
 
 
 # Integration Audit Log (Compliance & Observability)

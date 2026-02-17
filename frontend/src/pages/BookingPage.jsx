@@ -86,7 +86,7 @@ export default function BookingPage() {
     } finally {
       setSlotsLoading(false);
     }
-  }, [selected.service, selected.barber]);
+  }, [selected.service, selected.barber, publicBase]);
 
   useEffect(() => {
     if (selected.date) fetchSlots(selected.date);
