@@ -231,8 +231,10 @@ async def _do_book_appointment(shop: Shop, shop_slug: str, request: Request):
     if deposit_required:
         try:
             origin = request.headers.get("x-origin", str(request.base_url).rstrip("/"))
-            success_url = f"{origin}/book/{shop_slug}/confirmation?appointment_id={appointment_id}&session_id={{CHECKOUT_SESSION_ID}}"
-            cancel_url = f"{origin}/book/{shop_slug}?payment_cancelled=true&appointment_id={appointment_id}"
+            # Legacy shops with empty slug use /book/ paths; slug-based shops use /book/{slug}/
+            book_path = f"/book/{shop_slug}" if shop_slug else "/book"
+            success_url = f"{origin}{book_path}/confirmation?appointment_id={appointment_id}&session_id={{CHECKOUT_SESSION_ID}}"
+            cancel_url = f"{origin}{book_path}?payment_cancelled=true&appointment_id={appointment_id}"
 
             metadata = {
                 "appointment_id": appointment_id,

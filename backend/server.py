@@ -102,6 +102,9 @@ async def startup_event():
     # sparse=True so docs missing phone are excluded from uniqueness check
     await db.shops.create_index("phone", unique=True, sparse=True)
 
+    # Enforce global username uniqueness at DB level (login has no shop context)
+    await db.admin_users.create_index("username", unique=True)
+
     # Check if shop exists
     shop_count = await db.shops.count_documents({})
     if shop_count == 0:

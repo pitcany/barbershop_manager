@@ -44,11 +44,11 @@ async def twilio_inbound_webhook(request: Request):
     shop_data = None
     if to_number:
         shop_data = await db.shops.find_one({"phone": to_number}, {"_id": 0})
-    # Fallback: single-shop mode
+    # Fallback: single-shop mode (one atomic query to avoid TOCTOU race)
     if not shop_data:
-        count = await db.shops.count_documents({})
-        if count == 1:
-            shop_data = await db.shops.find_one({}, {"_id": 0})
+        fallback = await db.shops.find({}, {"_id": 0}).to_list(2)
+        if len(fallback) == 1:
+            shop_data = fallback[0]
     if not shop_data:
         logger.warning(f"No shop matched for inbound SMS to={to_number}")
         return JSONResponse(content={"status": "error", "reason": "no shop matched for inbound number"})

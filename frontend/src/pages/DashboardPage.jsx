@@ -72,21 +72,26 @@ export default function DashboardPage() {
 
   const fetchData = async () => {
     try {
-      const [statsRes, chartRes, scheduleRes, shopRes] = await Promise.all([
+      const [statsRes, chartRes, scheduleRes] = await Promise.all([
         axios.get(`${API}/dashboard/stats`),
         axios.get(`${API}/dashboard/revenue-chart?days=14`),
         axios.get(`${API}/dashboard/today-schedule`),
-        axios.get(`${API}/shop`),
       ]);
       setStats(statsRes.data);
       setChartData(fillDateGaps(chartRes.data.data, 14));
       setTodaySchedule(scheduleRes.data.appointments || []);
-      setShopSlug(shopRes.data.slug || "");
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error);
       toast.error("Failed to load dashboard data");
     } finally {
       setLoading(false);
+    }
+    // Fetch shop slug separately so a failure doesn't break the dashboard
+    try {
+      const shopRes = await axios.get(`${API}/shop`);
+      setShopSlug(shopRes.data.slug || "");
+    } catch {
+      // Non-critical — dashboard renders fine without the booking link slug
     }
   };
 
