@@ -101,14 +101,19 @@ async def update_shop(shop_id: str, body: UpdateShopDetailsRequest, user: dict =
 
 @router.post("/admin/shops/{shop_id}/admins")
 async def create_shop_admin(shop_id: str, body: CreateShopAdminRequest, user: dict = Depends(get_super_admin)):
-    """Create an admin user for a shop (super-admin only)."""
+    """Create an admin user for a shop (super-admin only).
+
+    Usernames must be globally unique (not per-shop) because the login
+    endpoint authenticates by username alone without a shop selector.
+    """
     shop = await db.shops.find_one({"id": shop_id}, {"_id": 0, "id": 1})
     if not shop:
         raise HTTPException(status_code=404, detail="Shop not found")
 
+    # Global uniqueness — login resolves by username without shop context
     existing = await db.admin_users.find_one({"username": body.username}, {"_id": 0, "id": 1})
     if existing:
-        raise HTTPException(status_code=409, detail="Username already taken")
+        raise HTTPException(status_code=409, detail="Username already taken across all shops. Choose a unique username.")
 
     now_iso = datetime.now(timezone.utc).isoformat()
     admin = {

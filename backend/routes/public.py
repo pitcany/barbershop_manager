@@ -25,14 +25,16 @@ async def _get_shop_by_slug(shop_slug: str) -> Shop:
 
 
 async def _get_single_shop() -> Shop:
-    """Fallback: return the only shop if exactly one exists (backward compat)."""
-    count = await db.shops.count_documents({})
-    if count != 1:
+    """Fallback: return the only shop if exactly one exists (backward compat).
+
+    Fetches at most 2 docs in a single query to avoid a TOCTOU race between
+    count_documents and find_one (a second shop inserted between the two calls
+    would make find_one return an arbitrary document).
+    """
+    shops = await db.shops.find({}, {"_id": 0}).to_list(2)
+    if len(shops) != 1:
         raise HTTPException(status_code=400, detail="Shop slug required. Use /api/public/s/{shop_slug}/...")
-    shop_data = await db.shops.find_one({}, {"_id": 0})
-    if not shop_data:
-        raise HTTPException(status_code=500, detail="Shop not configured")
-    return Shop(**shop_data)
+    return Shop(**shops[0])
 
 
 # ==================== SLUG-BASED PUBLIC ENDPOINTS ====================
