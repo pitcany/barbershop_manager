@@ -474,6 +474,18 @@ class UpdateShopDetailsRequest(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     address: Optional[str] = None
+    timezone: Optional[str] = None
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v):
+        if v is not None:
+            from zoneinfo import ZoneInfo
+            try:
+                ZoneInfo(v)
+            except (KeyError, ValueError):
+                raise ValueError(f"Invalid timezone: {v}")
+        return v
 
     @field_validator("slug")
     @classmethod
@@ -565,6 +577,16 @@ class CreateShopRequest(BaseModel):
     email: Optional[str] = None
     address: Optional[str] = None
     timezone: str = "America/New_York"
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v):
+        from zoneinfo import ZoneInfo
+        try:
+            ZoneInfo(v)
+        except (KeyError, ValueError):
+            raise ValueError(f"Invalid timezone: {v}")
+        return v
 
     @field_validator("slug")
     @classmethod
