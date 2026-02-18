@@ -45,34 +45,19 @@ async def create_shop(body: CreateShopRequest, user: dict = Depends(get_super_ad
 
     now_iso = datetime.now(timezone.utc).isoformat()
     shop_id = str(uuid.uuid4())
-    shop = {
-        "id": shop_id,
-        "slug": body.slug,
-        "name": body.name,
-        "phone": body.phone,
-        "email": body.email or "",
-        "address": body.address or "",
-        "timezone": body.timezone,
-        "business_hours": {
-            "monday": {"open": "09:00", "close": "18:00"},
-            "tuesday": {"open": "09:00", "close": "18:00"},
-            "wednesday": {"open": "09:00", "close": "18:00"},
-            "thursday": {"open": "09:00", "close": "18:00"},
-            "friday": {"open": "09:00", "close": "18:00"},
-            "saturday": {"open": "09:00", "close": "17:00"},
-            "sunday": None,
-        },
-        "deposit_amount": 20.0,
-        "deposit_required_hours": 48,
-        "confirmation_window_hours": 24,
-        "cancellation_window_hours": 4,
-        "max_messages_per_day": 4,
-        "retention_enabled": True,
-        "retention_lapse_weeks": 4,
-        "retention_cooldown_days": 7,
-        "created_at": now_iso,
-        "updated_at": now_iso,
-    }
+    # Derive defaults from the Shop model to avoid drift with hardcoded values
+    shop_obj = Shop(
+        id=shop_id,
+        slug=body.slug,
+        name=body.name,
+        phone=body.phone,
+        email=body.email or "",
+        address=body.address or "",
+        timezone=body.timezone,
+    )
+    shop = shop_obj.model_dump()
+    shop["created_at"] = now_iso
+    shop["updated_at"] = now_iso
     await db.shops.insert_one(shop)
     return {k: v for k, v in shop.items() if k != "_id"}
 
@@ -87,7 +72,9 @@ async def update_shop(shop_id: str, body: UpdateShopDetailsRequest, user: dict =
     if not shop:
         raise HTTPException(status_code=404, detail="Shop not found")
 
-    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    # exclude_unset=True ensures only caller-provided fields are included;
+    # None values are kept so callers can explicitly clear optional fields
+    update_data = body.model_dump(exclude_unset=True)
 
     if "slug" in update_data and update_data["slug"] != shop.get("slug"):
         existing = await db.shops.find_one({"slug": update_data["slug"], "id": {"$ne": shop_id}}, {"_id": 0, "id": 1})
