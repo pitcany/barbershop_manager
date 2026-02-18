@@ -71,15 +71,20 @@ export default function BookingPage() {
     }
   }, [searchParams]);
 
+  // Extract stable primitive IDs for useCallback deps to avoid exhaustive-deps warnings
+  const serviceId = selected.service?.id;
+  const barberId = selected.barber?.id;
+  const selectedDate = selected.date;
+
   const fetchSlots = useCallback(async (date) => {
-    if (!date || !selected.service) return;
+    if (!date || !serviceId) return;
     setSlotsLoading(true);
     try {
       const params = new URLSearchParams({
         date: `${date}T00:00:00`,
-        service_id: selected.service.id,
+        service_id: serviceId,
       });
-      if (selected.barber) params.set("barber_id", selected.barber.id);
+      if (barberId) params.set("barber_id", barberId);
       const res = await axios.get(`${publicBase}/availability?${params}`);
       setSlots(res.data.slots || []);
     } catch {
@@ -87,11 +92,11 @@ export default function BookingPage() {
     } finally {
       setSlotsLoading(false);
     }
-  }, [selected.service, selected.barber, publicBase]);
+  }, [serviceId, barberId, publicBase]);
 
   useEffect(() => {
-    if (selected.date) fetchSlots(selected.date);
-  }, [selected.date, fetchSlots]);
+    if (selectedDate) fetchSlots(selectedDate);
+  }, [selectedDate, fetchSlots]);
 
   const handleBook = async () => {
     setBooking(true);

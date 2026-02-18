@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+import re
 import uuid
 import logging
 
@@ -15,9 +16,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Must match the slug validators in models.py
+_SLUG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$')
+
 
 async def _get_shop_by_slug(shop_slug: str) -> Shop:
-    """Resolve a shop by its URL slug."""
+    """Resolve a shop by its URL slug.
+
+    Validates slug format before querying to reject obviously invalid
+    slugs with a 400 instead of hitting the DB for a guaranteed miss.
+    """
+    if not shop_slug or len(shop_slug) < 3 or len(shop_slug) > 50 or not _SLUG_RE.match(shop_slug):
+        raise HTTPException(status_code=400, detail="Invalid shop slug format")
     shop_data = await db.shops.find_one({"slug": shop_slug}, {"_id": 0})
     if not shop_data:
         raise HTTPException(status_code=404, detail="Shop not found")
