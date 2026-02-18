@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { useSearchParams, useParams, Link } from "react-router-dom";
 import axios from "axios";
 import { API } from "../App";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
@@ -8,6 +8,7 @@ import { CheckCircle, Clock, AlertTriangle, MapPin, Phone, Scissors } from "luci
 
 export default function BookingConfirmationPage() {
   const [searchParams] = useSearchParams();
+  const { shopSlug } = useParams();
   const appointmentId = searchParams.get("appointment_id");
   const sessionId = searchParams.get("session_id");
   const [appointment, setAppointment] = useState(null);
@@ -15,16 +16,18 @@ export default function BookingConfirmationPage() {
   const [shop, setShop] = useState(null);
   const [attempts, setAttempts] = useState(0);
 
+  const publicBase = shopSlug ? `${API}/public/s/${shopSlug}` : `${API}/public`;
+
   useEffect(() => {
     if (appointmentId) {
       axios.get(`${API}/public/appointment/${appointmentId}`)
         .then((res) => setAppointment(res.data))
         .catch(() => {});
     }
-    axios.get(`${API}/public/shop-info`)
+    axios.get(`${publicBase}/shop-info`)
       .then((res) => setShop(res.data))
       .catch(() => {});
-  }, [appointmentId]);
+  }, [appointmentId, publicBase]);
 
   const pollPayment = useCallback(async () => {
     if (!sessionId) return;
@@ -127,7 +130,7 @@ export default function BookingConfirmationPage() {
           )}
 
           <div className="pt-2 text-center">
-            <Link to="/book">
+            <Link to={shopSlug ? `/book/${shopSlug}` : "/book"}>
               <Button variant="outline" className="gap-2" data-testid="book-another-link">
                 <Scissors className="w-4 h-4" /> Book Another Appointment
               </Button>
