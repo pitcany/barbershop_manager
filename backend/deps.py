@@ -70,6 +70,14 @@ async def get_shop(user: dict = Depends(get_current_user)) -> Shop:
     return Shop(**shop_data)
 
 
+async def get_super_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Require super-admin role for shop management endpoints."""
+    admin = await db.admin_users.find_one({"id": user.get("sub")}, {"_id": 0, "role": 1})
+    if not admin or admin.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super-admin access required")
+    return user
+
+
 # ==================== RATE LIMITING ====================
 
 _rate_limit_store: Dict[str, List[float]] = {}

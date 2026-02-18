@@ -77,8 +77,9 @@ class EventType(str, Enum):
 # Base Models
 class Shop(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    
+
     id: str = Field(default_factory=generate_id)
+    slug: str = ""  # URL-safe identifier for public routes (e.g., "classic-cuts")
     name: str
     phone: str  # Shop's Twilio number
     email: Optional[str] = None
@@ -310,12 +311,13 @@ class EmailOutbox(BaseModel):
 # Admin User
 class AdminUser(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    
+
     id: str = Field(default_factory=generate_id)
     shop_id: str
     username: str
     password_hash: str
-    
+    role: str = "shop_admin"  # "super_admin" or "shop_admin"
+
     created_at: datetime = Field(default_factory=utc_now)
     last_login: Optional[datetime] = None
 
@@ -468,9 +470,38 @@ class UpdateServiceRequest(BaseModel):
 
 class UpdateShopDetailsRequest(BaseModel):
     name: Optional[str] = None
+    slug: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     address: Optional[str] = None
+    timezone: Optional[str] = None
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v):
+        if v is not None:
+            from zoneinfo import ZoneInfo
+            try:
+                ZoneInfo(v)
+            except (KeyError, ValueError):
+                raise ValueError(f"Invalid timezone: {v}")
+        return v
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, v):
+        if v is not None:
+            v = v.strip().lower()
+            if not re.match(r'^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$', v) or len(v) < 3 or len(v) > 50:
+                raise ValueError("Slug must be 3-50 chars, lowercase alphanumeric and single hyphens, cannot start/end with hyphen or contain consecutive hyphens")
+        return v
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v):
+        if v is not None:
+            return _validate_e164_phone(v)
+        return v
 
 
 class CreateClientRequest(BaseModel):
@@ -536,6 +567,62 @@ class SendTestEmailRequest(BaseModel):
         if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', v):
             raise ValueError("Invalid email format")
         return v.strip().lower()
+
+
+# Shop Management (Super-Admin)
+class CreateShopRequest(BaseModel):
+    name: str
+    slug: str
+    phone: str
+    email: Optional[str] = None
+    address: Optional[str] = None
+    timezone: str = "America/New_York"
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v):
+        from zoneinfo import ZoneInfo
+        try:
+            ZoneInfo(v)
+        except (KeyError, ValueError):
+            raise ValueError(f"Invalid timezone: {v}")
+        return v
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, v):
+        v = v.strip().lower()
+        if not re.match(r'^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$', v) or len(v) < 3 or len(v) > 50:
+            raise ValueError("Slug must be 3-50 chars, lowercase alphanumeric and single hyphens, cannot start/end with hyphen or contain consecutive hyphens")
+        return v
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v):
+        return _validate_e164_phone(v)
+
+
+class CreateShopAdminRequest(BaseModel):
+    username: str
+    password: str
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Username must not be empty")
+        if len(v) > 200:
+            raise ValueError("Username must be 200 characters or fewer")
+        return v.strip()
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        if not v or len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if len(v) > 128:
+            raise ValueError("Password must be 128 characters or fewer")
+        return v
 
 
 # Integration Audit Log (Compliance & Observability)
