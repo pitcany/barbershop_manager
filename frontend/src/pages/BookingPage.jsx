@@ -85,7 +85,7 @@ export default function BookingPage() {
         service_id: serviceId,
       });
       if (barberId) params.set("barber_id", barberId);
-      const res = await axios.get(`${publicBase}/availability?${params}`);
+      const res = await axios.get(`${urlSlug ? `${API}/public/s/${urlSlug}` : `${API}/public`}/availability?${params}`);
       setSlots(res.data.slots || []);
     } catch {
       setSlots([]);
