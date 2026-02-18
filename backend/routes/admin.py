@@ -74,8 +74,7 @@ async def create_shop(body: CreateShopRequest, user: dict = Depends(get_super_ad
         "updated_at": now_iso,
     }
     await db.shops.insert_one(shop)
-    shop.pop("_id", None)
-    return shop
+    return {k: v for k, v in shop.items() if k != "_id"}
 
 
 @router.patch("/admin/shops/{shop_id}")
@@ -134,9 +133,7 @@ async def create_shop_admin(shop_id: str, body: CreateShopAdminRequest, user: di
         "created_at": now_iso,
     }
     await db.admin_users.insert_one(admin)
-    admin.pop("_id", None)
-    admin.pop("password_hash", None)
-    return admin
+    return {k: v for k, v in admin.items() if k not in ("_id", "password_hash")}
 
 
 @router.get("/admin/shops/{shop_id}/admins")

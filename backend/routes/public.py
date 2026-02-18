@@ -173,7 +173,7 @@ async def _do_book_appointment(shop: Shop, shop_slug: str, request: Request):
             "updated_at": now_iso,
         }
         await db.clients.insert_one(client)
-        client.pop("_id", None)
+        client = {k: v for k, v in client.items() if k != "_id"}
 
     # Determine if deposit is required (smart enforcement)
     deposit_required = False
@@ -208,7 +208,7 @@ async def _do_book_appointment(shop: Shop, shop_slug: str, request: Request):
     }
 
     await db.appointments.insert_one(appointment)
-    appointment.pop("_id", None)
+    appointment = {k: v for k, v in appointment.items() if k != "_id"}
 
     # Sync to Google Calendar
     try:
