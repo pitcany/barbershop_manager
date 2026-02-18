@@ -6,7 +6,7 @@ import os
 import logging
 
 from deps import db
-from models import Shop, AppointmentStatus
+from models import Shop, AppointmentStatus, AuditProvider, AuditAction
 from providers import get_sms, get_payment, get_email
 from providers.interfaces import SMSMessage, EmailMessage
 from agents import FrontDeskAgent
@@ -108,12 +108,14 @@ async def twilio_inbound_webhook(request: Request):
         })
 
     audit = create_audit_logger(db, shop.id)
-    await audit.log_event({
-        "provider": "twilio",
-        "action": "inbound_sms",
-        "success": True,
-        "details": {"from": from_number, "body_length": len(body), "response_sent": bool(response_msg)},
-    })
+    await audit.log(
+        provider=AuditProvider.TWILIO,
+        action=AuditAction.SEND_SMS,
+        entity_type="client",
+        entity_id=client["id"],
+        success=True,
+        metadata={"from": from_number, "body_length": len(body), "response_sent": bool(response_msg)},
+    )
 
     return JSONResponse(content={"status": "processed", "action": metadata.get("action") if metadata else None})
 
