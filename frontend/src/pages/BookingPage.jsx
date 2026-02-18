@@ -18,7 +18,7 @@ export default function BookingPage() {
   const [searchParams] = useSearchParams();
   const { shopSlug: urlSlug } = useParams();
   const navigate = useNavigate();
-  const [shopSlug, setShopSlug] = useState(urlSlug || "");
+  const shopSlug = urlSlug || "";
   const [shop, setShop] = useState(null);
   const [services, setServices] = useState([]);
   const [barbers, setBarbers] = useState([]);
