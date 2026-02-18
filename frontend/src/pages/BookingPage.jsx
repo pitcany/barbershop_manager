@@ -58,7 +58,6 @@ export default function BookingPage() {
       setBarbers(barberRes.data.barbers || []);
       // If we didn't have a slug from URL, redirect to the slug-based URL
       if (!urlSlug && shopRes.data.slug) {
-        setShopSlug(shopRes.data.slug);
         navigate(`/book/${shopRes.data.slug}`, { replace: true });
       }
     }).catch(() => setError("Unable to load booking info"))
