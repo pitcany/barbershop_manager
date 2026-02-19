@@ -179,7 +179,12 @@ do_install() {
   # Pin bcrypt to avoid passlib 1.7.4 incompatibility on Python 3.13+
   "$VENV_DIR/bin/pip" install 'bcrypt==4.1.3'
 
-  # Frontend: yarn install
+  # Frontend: create .env from example if missing, then install
+  if [[ ! -f "$PROJECT_DIR/frontend/.env" && -f "$PROJECT_DIR/frontend/.env.example" ]]; then
+    cp "$PROJECT_DIR/frontend/.env.example" "$PROJECT_DIR/frontend/.env"
+    green "Created frontend/.env from .env.example"
+  fi
+
   green "Installing frontend dependencies..."
   cd "$PROJECT_DIR/frontend"
   yarn install

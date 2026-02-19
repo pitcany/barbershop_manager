@@ -86,14 +86,17 @@ frontend/node_modules/.cache/default-development/4.pack
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 frontend/node_modules/.cache/default-development/8.pack
 frontend/node_modules/.cache/default-development/0.pack
 frontend/node_modules/.cache/default-development/11.pack
@@ -102,6 +105,7 @@ frontend/node_modules/.cache/default-development/1.pack
 # Environment files
 *.env
 *.env.*
+!*.env.example
 frontend/node_modules/.cache/default-development/5.pack
 frontend/node_modules/.cache/default-development/7.pack
 frontend/node_modules/.cache/default-development/6.pack
@@ -109,36 +113,45 @@ frontend/node_modules/.cache/default-development/6.pack
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
 frontend/node_modules/.cache/default-development/4.pack_
 -e 
 # Environment files
 *.env
 *.env.*
+!*.env.example
