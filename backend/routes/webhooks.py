@@ -110,7 +110,7 @@ async def twilio_inbound_webhook(request: Request):
     audit = create_audit_logger(db, shop.id)
     await audit.log(
         provider=AuditProvider.TWILIO,
-        action=AuditAction.SEND_SMS,
+        action=AuditAction.RECEIVE_SMS,
         entity_type="client",
         entity_id=client["id"],
         success=True,
