@@ -20,7 +20,6 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection (singleton)
-# MongoDB connection (singleton)
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 _client = AsyncIOMotorClient(mongo_url)
 db = _client[os.environ.get('DB_NAME', 'barbershop_autopilot')]

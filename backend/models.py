@@ -635,6 +635,7 @@ class AuditProvider(str, Enum):
 
 class AuditAction(str, Enum):
     SEND_SMS = "send_sms"
+    RECEIVE_SMS = "receive_sms"
     SMS_BLOCKED_NO_CONSENT = "sms_blocked_no_consent"
     SMS_OPT_OUT = "sms_opt_out"
     CHARGE_DEPOSIT = "charge_deposit"
