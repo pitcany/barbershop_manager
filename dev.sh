@@ -15,7 +15,7 @@ yellow(){ printf '\033[0;33m%s\033[0m\n' "$*"; }
 
 usage() {
   cat <<EOF
-Usage: $0 {start|stop|restart|status|install}
+Usage: $0 {start|stop|restart|status|install|reseed}
 
 Commands:
   start    Start the backend and frontend dev servers
@@ -23,6 +23,7 @@ Commands:
   restart  Stop then start dev servers
   status   Show whether dev servers are running
   install  Create venv and install all dependencies
+  reseed   Drop database and restart with fresh demo data
 EOF
   exit 1
 }
@@ -157,6 +158,21 @@ do_restart() {
   do_start
 }
 
+do_reseed() {
+  local db_name="${DB_NAME:-barbershop_autopilot}"
+  yellow "Dropping database '$db_name'..."
+  if command -v mongosh &>/dev/null; then
+    mongosh --quiet --eval "db.getMongo().getDB(\"$db_name\").dropDatabase()"
+  else
+    red "mongosh not found. Install MongoDB Shell first."
+    exit 1
+  fi
+  green "Database dropped. Restarting with fresh seed data..."
+  do_stop
+  sleep 1
+  do_start
+}
+
 do_install() {
   # Backend: create venv and install deps
   local sys_python
@@ -215,5 +231,6 @@ case "$1" in
   restart) do_restart  ;;
   status)  do_status   ;;
   install) do_install  ;;
+  reseed)  do_reseed   ;;
   *)       usage       ;;
 esac
