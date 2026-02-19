@@ -55,10 +55,26 @@ is_running() {
   return 1
 }
 
+port_in_use() {
+  local port="$1"
+  if command -v lsof &>/dev/null; then
+    lsof -Pi :"$port" -sTCP:LISTEN -t >/dev/null 2>&1
+  elif command -v ss &>/dev/null; then
+    ss -tlnp "sport = :$port" 2>/dev/null | grep -q LISTEN
+  else
+    return 1
+  fi
+}
+
 start_backend() {
   if is_running "$BACKEND_PID_FILE"; then
     yellow "Backend already running (PID $(<"$BACKEND_PID_FILE"))"
     return
+  fi
+
+  if port_in_use "$BACKEND_PORT"; then
+    red "Port $BACKEND_PORT already in use (possibly a stale process). Free it and retry."
+    exit 1
   fi
 
   local py
@@ -86,6 +102,11 @@ start_frontend() {
 
   if [[ ! -d "$PROJECT_DIR/frontend/node_modules" ]]; then
     red "Frontend dependencies not installed. Run: $0 install"
+    exit 1
+  fi
+
+  if port_in_use "$FRONTEND_PORT"; then
+    red "Port $FRONTEND_PORT already in use (possibly a stale process). Free it and retry."
     exit 1
   fi
 
@@ -176,7 +197,7 @@ do_reseed() {
 do_install() {
   # Backend: create venv and install deps
   local sys_python
-  sys_python="$(command -v python3 || command -v python)"
+  sys_python="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo '')"
   if [[ -z "$sys_python" ]]; then
     red "No python found. Install Python 3.11+ first."
     exit 1
@@ -189,8 +210,15 @@ do_install() {
 
   green "Installing backend dependencies..."
   # Filter out emergentintegrations (not on PyPI) and install the rest
-  grep -v emergentintegrations "$PROJECT_DIR/backend/requirements.txt" \
-    | "$VENV_DIR/bin/pip" install -r /dev/stdin
+  local filtered_reqs
+  filtered_reqs="$(mktemp)"
+  if ! grep -v emergentintegrations "$PROJECT_DIR/backend/requirements.txt" > "$filtered_reqs"; then
+    rm -f "$filtered_reqs"
+    red "Failed to read backend/requirements.txt"
+    exit 1
+  fi
+  "$VENV_DIR/bin/pip" install -r "$filtered_reqs"
+  rm -f "$filtered_reqs"
 
   # Pin bcrypt to avoid passlib 1.7.4 incompatibility on Python 3.13+
   "$VENV_DIR/bin/pip" install 'bcrypt==4.1.3'
