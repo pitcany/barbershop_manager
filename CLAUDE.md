@@ -180,6 +180,7 @@ All external side effects are logged to the `integration_audit_log` collection f
 | `./dev.sh restart` | Stop then start dev servers |
 | `./dev.sh status` | Show whether dev servers are running |
 | `./dev.sh install` | Create venv and install all dependencies |
+| `./dev.sh reseed` | Drop database and restart with fresh demo data |
 | `yarn start` | Start frontend dev server (from `frontend/`) |
 | `yarn build` | Production build (from `frontend/`) |
 | `python scripts/simulate_sms.py --mode demo` | Demo SMS conversation |

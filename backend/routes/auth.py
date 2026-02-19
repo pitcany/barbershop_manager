@@ -77,17 +77,18 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
         today_count,
         month_total,
         month_noshows,
-        revenue_result,
+        recovered_result,
         waitlist_count,
         total_clients,
         deposits_result,
+        messages_today_count,
     ) = await asyncio.gather(
         db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": today_start}}),
         db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}}),
         db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}, "status": "no_show"}),
-        db.appointments.aggregate([
-            {"$match": {"shop_id": shop.id, "status": "completed", "scheduled_at": {"$gte": month_start}}},
-            {"$group": {"_id": None, "total": {"$sum": "$price"}}}
+        db.events.aggregate([
+            {"$match": {"shop_id": shop.id, "created_at": {"$gte": month_start}, "revenue_impact": {"$gt": 0}}},
+            {"$group": {"_id": None, "total": {"$sum": "$revenue_impact"}}}
         ]).to_list(1),
         db.waitlist.count_documents({"shop_id": shop.id, "active": True}),
         db.clients.count_documents({"shop_id": shop.id}),
@@ -95,9 +96,10 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
             {"$match": {"shop_id": shop.id, "status": "completed", "payment_type": "deposit", "created_at": {"$gte": month_start}}},
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
         ]).to_list(1),
+        db.messages.count_documents({"shop_id": shop.id, "created_at": {"$gte": today_start}}),
     )
 
-    revenue = revenue_result[0]["total"] if revenue_result else 0
+    revenue_recovered = recovered_result[0]["total"] if recovered_result else 0
     deposits_collected = deposits_result[0]["total"] if deposits_result else 0
     no_show_rate = round((month_noshows / month_total * 100) if month_total > 0 else 0, 1)
 
@@ -121,13 +123,14 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
         "today_appointments": today_count,
         "upcoming_appointments": upcoming,
         "no_show_rate": no_show_rate,
-        "month_revenue": revenue,
+        "revenue_recovered": revenue_recovered,
         "deposits_collected": deposits_collected,
-        "active_waitlist": waitlist_count,
+        "waitlist_count": waitlist_count,
+        "messages_today": messages_today_count,
         "recent_events": recent_events,
         "total_clients": total_clients,
-        "month_total_appointments": month_total,
-        "month_no_shows": month_noshows,
+        "appointments_month": month_total,
+        "no_shows_month": month_noshows,
     }
 
 
@@ -136,14 +139,31 @@ async def get_revenue_chart(shop: Shop = Depends(get_shop), days: int = 30):
     now = datetime.now(timezone.utc)
     start_date = (now - timedelta(days=days)).isoformat()
 
-    pipeline = [
-        {"$match": {"shop_id": shop.id, "scheduled_at": {"$gte": start_date}, "status": "completed"}},
-        {"$addFields": {"day": {"$substr": ["$scheduled_at", 0, 10]}}},
-        {"$group": {"_id": "$day", "revenue": {"$sum": "$price"}, "count": {"$sum": 1}}},
+    recovered_pipeline = [
+        {"$match": {"shop_id": shop.id, "created_at": {"$gte": start_date}, "revenue_impact": {"$gt": 0}}},
+        {"$addFields": {"day": {"$substr": ["$created_at", 0, 10]}}},
+        {"$group": {"_id": "$day", "total": {"$sum": "$revenue_impact"}}},
         {"$sort": {"_id": 1}}
     ]
-    data = await db.appointments.aggregate(pipeline).to_list(60)
-    return {"chart_data": [{"date": d["_id"], "revenue": d["revenue"], "appointments": d["count"]} for d in data]}
+    lost_pipeline = [
+        {"$match": {"shop_id": shop.id, "created_at": {"$gte": start_date}, "revenue_impact": {"$lt": 0}}},
+        {"$addFields": {"day": {"$substr": ["$created_at", 0, 10]}}},
+        {"$group": {"_id": "$day", "total": {"$sum": {"$abs": "$revenue_impact"}}}},
+        {"$sort": {"_id": 1}}
+    ]
+    recovered_data, lost_data = await asyncio.gather(
+        db.events.aggregate(recovered_pipeline).to_list(60),
+        db.events.aggregate(lost_pipeline).to_list(60),
+    )
+
+    recovered_map = {d["_id"]: d["total"] for d in recovered_data}
+    lost_map = {d["_id"]: d["total"] for d in lost_data}
+    all_dates = sorted(set(list(recovered_map.keys()) + list(lost_map.keys())))
+
+    return {"data": [
+        {"date": date, "recovered": recovered_map.get(date, 0), "lost": lost_map.get(date, 0)}
+        for date in all_dates
+    ]}
 
 
 # ==================== BARBERS & SERVICES ====================
