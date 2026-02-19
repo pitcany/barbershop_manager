@@ -8,6 +8,7 @@ from .jobs import router as jobs_router
 from .public import router as public_router
 from .webhooks import router as webhooks_router
 from .admin import router as admin_router
+from .walkin_queue import router as walkin_queue_router
 
 all_routers = [
     auth_router,
@@ -19,4 +20,5 @@ all_routers = [
     public_router,
     webhooks_router,
     admin_router,
+    walkin_queue_router,
 ]

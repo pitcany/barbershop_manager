@@ -21,6 +21,7 @@ const PaymentSuccessPage = lazy(() => import("./pages/PaymentSuccessPage"));
 const PaymentCancelPage = lazy(() => import("./pages/PaymentCancelPage"));
 const BookingPage = lazy(() => import("./pages/BookingPage"));
 const BookingConfirmationPage = lazy(() => import("./pages/BookingConfirmationPage"));
+const WalkInQueuePage = lazy(() => import("./pages/WalkInQueuePage"));
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -187,6 +188,11 @@ function App() {
               <Route path="/waitlist" element={
                 <ProtectedRoute>
                   <WaitlistPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/walk-in-queue" element={
+                <ProtectedRoute>
+                  <WalkInQueuePage />
                 </ProtectedRoute>
               } />
               <Route path="/reporting" element={

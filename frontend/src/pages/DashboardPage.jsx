@@ -18,7 +18,8 @@ import {
   User,
   Scissors,
   Link2,
-  Copy
+  Copy,
+  Timer
 } from "lucide-react";
 import { 
   ResponsiveContainer,
@@ -121,6 +122,7 @@ export default function DashboardPage() {
     { title: "No-Shows This Month", value: stats?.no_shows_month || 0, icon: TrendingDown },
     { title: "Waitlist", value: stats?.waitlist_count || 0, icon: Users },
     { title: "Deposits Collected", value: `$${(stats?.deposits_collected || 0).toFixed(2)}`, icon: DollarSign },
+    { title: "Walk-in Queue", value: stats?.walkin_queue_size || 0, icon: Timer },
   ];
 
   return (
@@ -270,7 +272,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Secondary Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {secondaryStats.map((stat, index) => (
             <Card key={index} className="bg-card border-border">
               <CardContent className="p-4">

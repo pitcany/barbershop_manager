@@ -81,6 +81,8 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
         waitlist_count,
         total_clients,
         deposits_result,
+        walkin_queue_count,
+        walkin_served_today,
     ) = await asyncio.gather(
         db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": today_start}}),
         db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}}),
@@ -95,6 +97,8 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
             {"$match": {"shop_id": shop.id, "status": "completed", "payment_type": "deposit", "created_at": {"$gte": month_start}}},
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
         ]).to_list(1),
+        db.walkin_queue.count_documents({"shop_id": shop.id, "status": {"$in": ["waiting", "notified"]}}),
+        db.walkin_queue.count_documents({"shop_id": shop.id, "status": "completed", "completed_at": {"$gte": today_start}}),
     )
 
     revenue = revenue_result[0]["total"] if revenue_result else 0
@@ -128,6 +132,8 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
         "total_clients": total_clients,
         "month_total_appointments": month_total,
         "month_no_shows": month_noshows,
+        "walkin_queue_size": walkin_queue_count,
+        "walkin_served_today": walkin_served_today,
     }
 
 

@@ -9,7 +9,8 @@ import re
 
 from models import (
     Appointment, AppointmentStatus, Client, Message, MessageDirection,
-    Service, Barber, Shop, Waitlist, Event, EventType, ALLOWED_TRANSITIONS
+    Service, Barber, Shop, Waitlist, Event, EventType, ALLOWED_TRANSITIONS,
+    WalkInQueueStatus,
 )
 from providers import get_sms, get_calendar, get_payment
 from providers.interfaces import SMSMessage, CalendarEvent
@@ -71,6 +72,9 @@ class MessageTemplates:
     HELP_RESPONSE = (
         "Available commands:\n"
         "• BOOK - Schedule an appointment\n"
+        "• WAIT - Join the walk-in queue\n"
+        "• QSTATUS - Check your queue position\n"
+        "• LEAVE - Leave the walk-in queue\n"
         "• CANCEL - Cancel your appointment\n"
         "• RESCHEDULE - Change your appointment time\n"
         "• STATUS - Check your appointment\n"
@@ -120,7 +124,16 @@ class FrontDeskAgent:
         
         if content in ("STATUS", "CHECK"):
             return await self._handle_status_check(client)
-        
+
+        if content in ("WAIT", "WALKIN", "WALK-IN", "QUEUE"):
+            return await self._handle_walkin_join(client)
+
+        if content in ("LEAVE", "EXIT"):
+            return await self._handle_walkin_leave(client)
+
+        if content in ("QSTATUS", "Q", "POSITION"):
+            return await self._handle_walkin_status(client)
+
         # Default greeting for unrecognized messages
         return self._format_template(
             MessageTemplates.GREETING,
@@ -271,6 +284,74 @@ class FrontDeskAgent:
             f"Status: {status}"
         ), {"action": "status_checked", "appointment_id": appointment["id"]}
     
+    async def _handle_walkin_join(self, client: Client) -> Tuple[str, Dict]:
+        """Handle walk-in queue join request."""
+        from walkin_queue_agent import WalkInQueueAgent
+
+        enabled = getattr(self.shop, "walkin_queue_enabled", None)
+        if not enabled:
+            return "Walk-in queue is not currently active. Please call us for availability.", {"action": "walkin_disabled"}
+
+        agent = WalkInQueueAgent(self.db, self.shop)
+        result = await agent.join_queue(
+            client={"id": client.id, "name": client.name, "phone": client.phone},
+            source="sms",
+        )
+
+        if result.get("error") == "queue_full":
+            return (
+                f"Sorry, our walk-in queue is full right now (max {result['max_size']}). "
+                "Please try again later or reply BOOK to schedule an appointment."
+            ), {"action": "walkin_queue_full"}
+
+        pos = result["position"]
+        wait = result["estimated_wait_minutes"]
+        return (
+            f"You're #{pos} in line at {self.shop.name}! "
+            f"Estimated wait: ~{wait} min. "
+            f"We'll text you when you're next. "
+            f"Reply LEAVE to exit the queue or QSTATUS for updates."
+        ), {"action": "walkin_joined", "entry_id": result["id"], "position": pos}
+
+    async def _handle_walkin_leave(self, client: Client) -> Tuple[str, Dict]:
+        """Handle walk-in queue leave request."""
+        from walkin_queue_agent import WalkInQueueAgent
+
+        agent = WalkInQueueAgent(self.db, self.shop)
+        entry = await agent.get_client_position(client.id)
+        if not entry:
+            return "You're not currently in the walk-in queue.", {"action": "walkin_not_in_queue"}
+
+        await agent.remove_from_queue(entry["id"])
+        return (
+            "You've been removed from the walk-in queue. "
+            "Reply WAIT to rejoin anytime or BOOK to schedule an appointment."
+        ), {"action": "walkin_left", "entry_id": entry["id"]}
+
+    async def _handle_walkin_status(self, client: Client) -> Tuple[str, Dict]:
+        """Handle walk-in queue status check."""
+        from walkin_queue_agent import WalkInQueueAgent
+
+        agent = WalkInQueueAgent(self.db, self.shop)
+        entry = await agent.get_client_position(client.id)
+        if not entry:
+            return "You're not currently in the walk-in queue. Reply WAIT to join.", {"action": "walkin_not_in_queue"}
+
+        pos = entry["position"]
+        wait = entry["estimated_wait_minutes"]
+        status = entry["status"]
+
+        if status == WalkInQueueStatus.NOTIFIED.value:
+            return (
+                f"You're next in line at {self.shop.name}! "
+                "Please head over — your barber will be ready shortly."
+            ), {"action": "walkin_notified", "position": pos}
+
+        return (
+            f"Queue update: You're #{pos} in line. "
+            f"Estimated wait: ~{wait} min."
+        ), {"action": "walkin_status", "position": pos, "wait_minutes": wait}
+
     async def _log_event(
         self,
         event_type: EventType,

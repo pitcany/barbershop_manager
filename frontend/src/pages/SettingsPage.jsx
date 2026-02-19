@@ -23,7 +23,8 @@ import {
   CreditCard,
   Link2,
   Link2Off,
-  CheckCircle2
+  CheckCircle2,
+  Timer
 } from "lucide-react";
 
 const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
@@ -50,6 +51,10 @@ export default function SettingsPage() {
     retention_enabled: true,
     retention_lapse_weeks: 4,
     retention_cooldown_days: 7,
+    walkin_queue_enabled: true,
+    walkin_avg_service_minutes: 30,
+    walkin_notify_position: 2,
+    walkin_max_queue_size: 20,
   });
 
   // Shop details form
@@ -105,6 +110,10 @@ export default function SettingsPage() {
         retention_enabled: response.data.retention_enabled ?? true,
         retention_lapse_weeks: response.data.retention_lapse_weeks ?? 4,
         retention_cooldown_days: response.data.retention_cooldown_days ?? 7,
+        walkin_queue_enabled: response.data.walkin_queue_enabled ?? true,
+        walkin_avg_service_minutes: response.data.walkin_avg_service_minutes ?? 30,
+        walkin_notify_position: response.data.walkin_notify_position ?? 2,
+        walkin_max_queue_size: response.data.walkin_max_queue_size ?? 20,
       };
       setFormData(newFormData);
       savedDataRef.current = { ...newFormData };
@@ -478,6 +487,76 @@ export default function SettingsPage() {
                     <p className="text-xs text-muted-foreground">
                       Minimum days between outreach messages to the same client
                     </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Walk-in Queue Settings */}
+            <div>
+              <h4 className="text-sm font-medium mb-4 flex items-center gap-2">
+                <Timer className="w-4 h-4 text-primary" />
+                Walk-in Queue
+              </h4>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 p-3">
+                  <div>
+                    <p className="text-sm font-medium">Enable Walk-in Queue</p>
+                    <p className="text-xs text-muted-foreground">Allow clients to join a live walk-in queue via SMS</p>
+                  </div>
+                  <Switch
+                    data-testid="walkin-queue-enabled-switch"
+                    checked={formData.walkin_queue_enabled}
+                    onCheckedChange={(v) => setFormData(prev => ({ ...prev, walkin_queue_enabled: v }))}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="walkin_avg_service">Avg Service Time (min)</Label>
+                    <Input
+                      id="walkin_avg_service"
+                      data-testid="walkin-avg-service-input"
+                      type="number"
+                      min="5"
+                      max="120"
+                      value={formData.walkin_avg_service_minutes}
+                      onChange={(e) => setFormData(prev => ({ ...prev, walkin_avg_service_minutes: safeInt(e.target.value) }))}
+                      className="bg-input/50 border-input"
+                      disabled={!formData.walkin_queue_enabled}
+                    />
+                    <p className="text-xs text-muted-foreground">Used to estimate wait times</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="walkin_notify_pos">Notify at Position</Label>
+                    <Input
+                      id="walkin_notify_pos"
+                      data-testid="walkin-notify-position-input"
+                      type="number"
+                      min="1"
+                      max="5"
+                      value={formData.walkin_notify_position}
+                      onChange={(e) => setFormData(prev => ({ ...prev, walkin_notify_position: safeInt(e.target.value) }))}
+                      className="bg-input/50 border-input"
+                      disabled={!formData.walkin_queue_enabled}
+                    />
+                    <p className="text-xs text-muted-foreground">Send "you're next" SMS at this position</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="walkin_max_size">Max Queue Size</Label>
+                    <Input
+                      id="walkin_max_size"
+                      data-testid="walkin-max-queue-input"
+                      type="number"
+                      min="1"
+                      max="50"
+                      value={formData.walkin_max_queue_size}
+                      onChange={(e) => setFormData(prev => ({ ...prev, walkin_max_queue_size: safeInt(e.target.value) }))}
+                      className="bg-input/50 border-input"
+                      disabled={!formData.walkin_queue_enabled}
+                    />
+                    <p className="text-xs text-muted-foreground">Maximum clients in queue at once</p>
                   </div>
                 </div>
               </div>

@@ -91,6 +91,8 @@ async def startup_event():
     await db.waitlist.create_index([("shop_id", 1), ("active", 1)])
     await db.events.create_index([("shop_id", 1), ("created_at", -1)])
     await db.payments.create_index([("shop_id", 1), ("status", 1), ("payment_type", 1)])
+    await db.walkin_queue.create_index([("shop_id", 1), ("status", 1), ("joined_at", 1)])
+    await db.walkin_queue.create_index([("shop_id", 1), ("client_id", 1), ("status", 1)])
 
     # Unique index on shop slug for multi-tenancy
     # Use partial filter to skip docs with empty/missing slug (legacy shops)
@@ -158,6 +160,10 @@ async def seed_demo_data():
         "retention_enabled": True,
         "retention_lapse_weeks": 4,
         "retention_cooldown_days": 7,
+        "walkin_queue_enabled": True,
+        "walkin_avg_service_minutes": 30,
+        "walkin_notify_position": 2,
+        "walkin_max_queue_size": 20,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }

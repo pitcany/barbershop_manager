@@ -62,6 +62,15 @@ class PaymentStatus(str, Enum):
     REFUNDED = "refunded"
 
 
+class WalkInQueueStatus(str, Enum):
+    WAITING = "waiting"
+    NOTIFIED = "notified"
+    SERVING = "serving"
+    COMPLETED = "completed"
+    LEFT = "left"
+    EXPIRED = "expired"
+
+
 class EventType(str, Enum):
     APPOINTMENT_CREATED = "appointment_created"
     APPOINTMENT_CONFIRMED = "appointment_confirmed"
@@ -72,6 +81,11 @@ class EventType(str, Enum):
     SMS_SENT = "sms_sent"
     SMS_RECEIVED = "sms_received"
     REVENUE_RECOVERED = "revenue_recovered"
+    WALKIN_JOINED = "walkin_joined"
+    WALKIN_NOTIFIED = "walkin_notified"
+    WALKIN_SERVING = "walkin_serving"
+    WALKIN_COMPLETED = "walkin_completed"
+    WALKIN_LEFT = "walkin_left"
 
 
 # Base Models
@@ -103,7 +117,13 @@ class Shop(BaseModel):
     confirmation_window_hours: int = 24  # Hours before appointment to send confirmation
     cancellation_window_hours: int = 4  # Minimum notice for cancellation
     max_messages_per_day: int = 4  # Rate limit for outbound SMS
-    
+
+    # Walk-in queue
+    walkin_queue_enabled: bool = False
+    walkin_avg_service_minutes: int = 30
+    walkin_notify_position: int = 2
+    walkin_max_queue_size: int = 20
+
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -242,9 +262,34 @@ class Waitlist(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class WalkInQueueEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_id)
+    shop_id: str
+    client_id: str
+    barber_id: Optional[str] = None
+    service_id: Optional[str] = None
+
+    position: int = 0
+    joined_at: datetime = Field(default_factory=utc_now)
+    estimated_wait_minutes: int = 0
+
+    status: WalkInQueueStatus = WalkInQueueStatus.WAITING
+    notified_at: Optional[datetime] = None
+    serving_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    assigned_barber_id: Optional[str] = None
+    source: str = "sms"
+
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class Payment(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    
+
     id: str = Field(default_factory=generate_id)
     shop_id: str
     client_id: str
@@ -374,6 +419,11 @@ class PolicyUpdate(BaseModel):
     retention_enabled: Optional[bool] = None
     retention_lapse_weeks: Optional[int] = None
     retention_cooldown_days: Optional[int] = None
+    # Walk-in queue settings
+    walkin_queue_enabled: Optional[bool] = None
+    walkin_avg_service_minutes: Optional[int] = None
+    walkin_notify_position: Optional[int] = None
+    walkin_max_queue_size: Optional[int] = None
 
     @field_validator("deposit_amount")
     @classmethod
@@ -544,6 +594,12 @@ class CreateWaitlistRequest(BaseModel):
         if v < 0:
             raise ValueError("flexible_hours must be >= 0")
         return v
+
+
+class JoinQueueRequest(BaseModel):
+    client_id: str
+    service_id: Optional[str] = None
+    barber_id: Optional[str] = None
 
 
 class SendTestSMSRequest(BaseModel):
