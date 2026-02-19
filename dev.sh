@@ -172,7 +172,12 @@ do_install() {
   fi
 
   green "Installing backend dependencies..."
-  "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/backend/requirements.txt"
+  # Filter out emergentintegrations (not on PyPI) and install the rest
+  grep -v emergentintegrations "$PROJECT_DIR/backend/requirements.txt" \
+    | "$VENV_DIR/bin/pip" install -r /dev/stdin
+
+  # Pin bcrypt to avoid passlib 1.7.4 incompatibility on Python 3.13+
+  "$VENV_DIR/bin/pip" install 'bcrypt==4.1.3'
 
   # Frontend: yarn install
   green "Installing frontend dependencies..."

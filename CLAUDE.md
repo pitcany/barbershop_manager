@@ -23,15 +23,16 @@ A production-grade system to reduce no-shows and recover lost revenue for barber
 ```bash
 # Prerequisites: Python 3.11+, Node.js 18+, Yarn, MongoDB running locally
 
-# Backend
-cd backend
+# One-command setup
+./dev.sh install   # Creates venv in backend/.venv, installs all deps
+./dev.sh start     # Starts backend + frontend, streams logs, Ctrl+C to stop
+
+# Or manually:
+cd backend && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m uvicorn server:app --reload --port 8001
-
-# Frontend (separate terminal)
-cd frontend
-yarn install
-yarn start
+# (in separate terminal)
+cd frontend && yarn install && yarn start
 
 # Access
 # Frontend: http://localhost:3000
@@ -174,7 +175,11 @@ All external side effects are logged to the `integration_audit_log` collection f
 
 | Command | Description |
 |---------|-------------|
-| `python -m uvicorn server:app --reload --port 8001` | Start backend dev server |
+| `./dev.sh start` | Start backend + frontend (streams logs, Ctrl+C to stop) |
+| `./dev.sh stop` | Stop running dev servers |
+| `./dev.sh restart` | Stop then start dev servers |
+| `./dev.sh status` | Show whether dev servers are running |
+| `./dev.sh install` | Create venv and install all dependencies |
 | `yarn start` | Start frontend dev server (from `frontend/`) |
 | `yarn build` | Production build (from `frontend/`) |
 | `python scripts/simulate_sms.py --mode demo` | Demo SMS conversation |
@@ -201,6 +206,37 @@ All external side effects are logged to the `integration_audit_log` collection f
 | `SENDER_EMAIL` | If email | — | From email address |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | No | — | Path to Google Calendar creds |
 | `REACT_APP_BACKEND_URL` | Yes | — | Backend URL for frontend |
+
+## Troubleshooting
+
+### `passlib` + `bcrypt` crash on Python 3.13+
+
+`passlib` 1.7.4 is unmaintained and incompatible with `bcrypt` >= 4.2 on newer Python versions. Symptoms: `ValueError: password cannot be longer than 72 bytes` during startup, or `AttributeError: module 'bcrypt' has no attribute '__about__'`.
+
+**Fix:** After installing requirements, pin bcrypt:
+```bash
+backend/.venv/bin/pip install 'bcrypt==4.1.3'
+```
+
+### `emergentintegrations` not found during `pip install`
+
+`requirements.txt` includes `emergentintegrations==0.1.0` which is not on PyPI. This causes `pip install -r requirements.txt` to fail and roll back all installs.
+
+**Fix:** Install without it:
+```bash
+grep -v emergentintegrations backend/requirements.txt | backend/.venv/bin/pip install -r /dev/stdin
+backend/.venv/bin/pip install 'bcrypt==4.1.3'
+```
+
+### Login fails with `admin / admin123`
+
+Seed data only runs when the `shops` collection is empty. If a previous startup crashed mid-seed (e.g., due to the bcrypt issue above), the shop exists but the admin user doesn't — and re-seeding is skipped on subsequent starts.
+
+**Fix:** Drop the database and restart:
+```bash
+mongosh --quiet --eval 'db.getMongo().getDB("barbershop_autopilot").dropDatabase()'
+./dev.sh restart
+```
 
 ## API Endpoints
 
