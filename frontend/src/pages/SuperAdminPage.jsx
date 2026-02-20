@@ -132,7 +132,11 @@ export default function SuperAdminPage() {
       setAdminDialogOpen(false);
       selectShop(selectedShop);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to create admin");
+      const detail = e.response?.data?.detail;
+      const errMsg = Array.isArray(detail)
+        ? detail.map(d => d.msg || d.message || JSON.stringify(d)).join("; ")
+        : (typeof detail === "string" ? detail : "Failed to create admin");
+      toast.error(errMsg);
     } finally { setSubmittingAdmin(false); }
   };
 
