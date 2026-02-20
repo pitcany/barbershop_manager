@@ -124,7 +124,7 @@ export default function Layout({ children, title }) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">{user?.username || "Admin"}</p>
-                <p className="text-xs text-muted-foreground">Shop Manager</p>
+                <p className="text-xs text-muted-foreground">{user?.role === "super_admin" ? "Platform Admin" : "Shop Manager"}</p>
               </div>
               <Button
                 variant="ghost"
