@@ -93,7 +93,12 @@ export default function SuperAdminPage() {
       setShopDialogOpen(false);
       fetchShops();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to create shop");
+      const detail = e.response?.data?.detail;
+      // Handle Pydantic validation errors (array of objects) vs simple string errors
+      const errMsg = Array.isArray(detail)
+        ? detail.map(d => d.msg || d.message || JSON.stringify(d)).join("; ")
+        : (typeof detail === "string" ? detail : "Failed to create shop");
+      toast.error(errMsg);
     } finally { setSubmittingShop(false); }
   };
 
