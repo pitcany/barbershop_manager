@@ -3,10 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import logging
+import os
 
 from deps import db, get_shop, get_current_user, batch_fetch_map
 from models import Shop
-from scheduler import get_job_status
 from owner_ops_agent import OwnerOpsAgent
 from retention_rebook_agent import RetentionRebookAgent
 
@@ -14,44 +14,70 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+USE_CELERY_SCHEDULER = os.environ.get("USE_CELERY_SCHEDULER", "false").lower() == "true"
+
+
+def _get_scheduler_status_apscheduler() -> dict:
+    from scheduler import get_job_status
+    jobs = get_job_status()
+    return {"scheduler_mode": "apscheduler", "jobs": jobs, "recent_runs": []}
+
+
+async def _get_scheduler_status_celery() -> dict:
+    runs = await db.job_runs.find({}, {"_id": 0}).sort("started_at", -1).limit(10).to_list(10)
+    return {"scheduler_mode": "celery", "jobs": [], "recent_runs": runs}
+
 
 # ==================== SCHEDULED JOBS ====================
 
 @router.post("/jobs/reminders/run")
 async def run_reminder_job(shop: Shop = Depends(get_shop)):
-    from scheduled_jobs import run_appointment_reminders
-    results = await run_appointment_reminders(db, shop.id)
-    return {"message": "Reminder job executed", "results": results}
+    if USE_CELERY_SCHEDULER:
+        from tasks.reminders import run_reminders_task
+        task = run_reminders_task.delay()
+        return {"status": "enqueued", "task_id": task.id, "mode": "celery"}
+    from scheduled_jobs import run_reminder_job_for_all_shops
+    results = await run_reminder_job_for_all_shops(db)
+    return {"status": "completed", "results": results, "mode": "apscheduler"}
 
 
 @router.get("/jobs/reminders/preview")
 async def preview_reminders(shop: Shop = Depends(get_shop)):
-    now = datetime.now(timezone.utc)
-    window_start = now.isoformat()
-    window_end = (now + timedelta(hours=shop.confirmation_window_hours)).isoformat()
+    from scheduled_jobs import AppointmentReminderJob
+    job = AppointmentReminderJob(db, shop)
+    appointments = await job.get_appointments_needing_reminder()
 
-    upcoming = await db.appointments.find(
-        {"shop_id": shop.id, "scheduled_at": {"$gte": window_start, "$lte": window_end}, "status": {"$in": ["confirmed", "deposit_paid"]}},
-        {"_id": 0},
-    ).to_list(50)
-
-    client_ids = [apt.get("client_id") for apt in upcoming if apt.get("client_id")]
-    barber_ids = [apt.get("barber_id") for apt in upcoming if apt.get("barber_id")]
+    client_ids = [apt.get("client_id") for apt in appointments if apt.get("client_id")]
+    barber_ids = [apt.get("barber_id") for apt in appointments if apt.get("barber_id")]
     clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1, "sms_consent": 1})
     barbers_map = await batch_fetch_map(db.barbers, barber_ids, {"id": 1, "name": 1})
-    for apt in upcoming:
+    for apt in appointments:
         apt["client"] = clients_map.get(apt.get("client_id")) or {"name": "Unknown"}
         barber = barbers_map.get(apt.get("barber_id"))
         apt["barber_name"] = barber["name"] if barber else "Unknown"
 
-    return {"preview": upcoming, "window": {"start": window_start, "end": window_end}}
+    now = datetime.now(timezone.utc)
+    window_end = now + timedelta(hours=shop.confirmation_window_hours)
+    return {
+        "reminder_window_hours": shop.confirmation_window_hours,
+        "appointments_needing_reminder": len(appointments),
+        "preview": appointments,
+        "window": {
+            "start": now.isoformat(),
+            "end": window_end.isoformat(),
+        },
+    }
 
 
 @router.post("/jobs/daily-summary/run")
 async def run_daily_summary(shop: Shop = Depends(get_shop)):
+    if USE_CELERY_SCHEDULER:
+        from tasks.owner_ops import run_daily_summary_task
+        task = run_daily_summary_task.delay()
+        return {"status": "enqueued", "task_id": task.id, "mode": "celery"}
     agent = OwnerOpsAgent(db, shop.model_dump())
     result = await agent.send_daily_summary()
-    return {"message": "Daily summary executed", "result": result}
+    return {"message": "Daily summary executed", "result": result, "mode": "apscheduler"}
 
 
 @router.get("/jobs/daily-summary/preview")
@@ -63,21 +89,62 @@ async def preview_daily_summary(shop: Shop = Depends(get_shop)):
 
 @router.get("/jobs/status")
 async def scheduler_status(user: dict = Depends(get_current_user)):
-    return get_job_status()
+    if USE_CELERY_SCHEDULER:
+        return await _get_scheduler_status_celery()
+    return _get_scheduler_status_apscheduler()
 
 
 @router.post("/jobs/retention/run")
 async def run_retention_sweep(shop: Shop = Depends(get_shop)):
+    if USE_CELERY_SCHEDULER:
+        from tasks.retention import run_retention_task
+        task = run_retention_task.delay()
+        return {"status": "enqueued", "task_id": task.id, "mode": "celery"}
     agent = RetentionRebookAgent(db, shop.model_dump())
-    result = await agent.run_retention_sweep(shop.id)
+    result = await agent.run(shop.id)
     return result
 
 
 @router.get("/jobs/retention/preview")
 async def preview_retention(shop: Shop = Depends(get_shop)):
     agent = RetentionRebookAgent(db, shop.model_dump())
-    preview = await agent.preview_targets(shop.id)
-    return preview
+    lapsed = await agent.find_lapsed_clients()
+    return {"lapsed_clients": lapsed, "count": len(lapsed)}
+
+
+@router.get("/jobs/runs")
+async def list_job_runs(
+    job_name: Optional[str] = None,
+    limit: int = 50,
+    user: dict = Depends(get_current_user),
+):
+    query = {}
+    if job_name:
+        query["job_name"] = job_name
+    runs = await db.job_runs.find(query, {"_id": 0}).sort("started_at", -1).limit(limit).to_list(limit)
+    return {"runs": runs, "count": len(runs)}
+
+
+@router.post("/jobs/runs/{run_id}/replay")
+async def replay_job_run(run_id: str, user: dict = Depends(get_current_user)):
+    run = await db.job_runs.find_one({"id": run_id}, {"_id": 0})
+    if not run:
+        raise HTTPException(status_code=404, detail="Job run not found")
+    if run.get("status") != "failed":
+        raise HTTPException(status_code=400, detail=f"Can only replay failed runs; this run has status '{run.get('status')}'")
+
+    job_name = run.get("job_name")
+    dispatch_map = {
+        "appointment_reminders": lambda: __import__("tasks.reminders", fromlist=["run_reminders_task"]).run_reminders_task,
+        "daily_summary": lambda: __import__("tasks.owner_ops", fromlist=["run_daily_summary_task"]).run_daily_summary_task,
+        "retention_sweep": lambda: __import__("tasks.retention", fromlist=["run_retention_task"]).run_retention_task,
+    }
+    if job_name not in dispatch_map:
+        raise HTTPException(status_code=400, detail=f"Unknown job_name '{job_name}'")
+
+    task_fn = dispatch_map[job_name]()
+    task = task_fn.delay()
+    return {"status": "enqueued", "task_id": task.id, "replayed_run_id": run_id, "job_name": job_name}
 
 
 @router.get("/retention/outreach-history")
