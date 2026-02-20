@@ -64,16 +64,27 @@ export default function SuperAdminPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submittingAdmin, setSubmittingAdmin] = useState(false);
 
-  useEffect(() => { fetchShops(); }, []);
+  useEffect(() => { fetchData(); }, []);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [shopsRes, statsRes] = await Promise.all([
+        axios.get(`${API}/admin/shops`),
+        axios.get(`${API}/admin/platform-stats`),
+      ]);
+      setShops(shopsRes.data.shops);
+      setPlatformStats(statsRes.data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to load data");
+    } finally { setLoading(false); }
+  };
 
   const fetchShops = async () => {
-    setLoading(true);
     try {
       const res = await axios.get(`${API}/admin/shops`);
       setShops(res.data.shops);
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to load shops");
-    } finally { setLoading(false); }
+    } catch {}
   };
 
   // ===== CREATE SHOP =====
