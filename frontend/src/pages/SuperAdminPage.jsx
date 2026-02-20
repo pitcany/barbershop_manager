@@ -186,6 +186,106 @@ export default function SuperAdminPage() {
           </Button>
         </div>
 
+        {/* Platform Overview Stats */}
+        {platformStats && (
+          <div data-testid="platform-overview" className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Card className="bg-card border-border">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+                    <Building2 className="w-5 h-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Total Shops</p>
+                    <p className="text-2xl font-mono font-semibold" data-testid="stat-total-shops">{platformStats.total_shops}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-card border-border">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-500/10 rounded-lg flex items-center justify-center">
+                    <Calendar className="w-5 h-5 text-blue-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Appointments (30d)</p>
+                    <p className="text-2xl font-mono font-semibold" data-testid="stat-month-appointments">{platformStats.month_appointments}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-card border-border">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-500/10 rounded-lg flex items-center justify-center">
+                    <DollarSign className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Revenue (30d)</p>
+                    <p className="text-2xl font-mono font-semibold text-emerald-400" data-testid="stat-month-revenue">${platformStats.month_revenue.toFixed(2)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-card border-border">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${platformStats.no_show_rate > 10 ? "bg-red-500/10" : "bg-yellow-500/10"}`}>
+                    <AlertTriangle className={`w-5 h-5 ${platformStats.no_show_rate > 10 ? "text-red-400" : "text-yellow-400"}`} />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">No-Show Rate</p>
+                    <p className="text-2xl font-mono font-semibold" data-testid="stat-no-show-rate">{platformStats.no_show_rate}%</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Per-Shop Breakdown */}
+        {platformStats?.shop_breakdown?.length > 1 && (
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-primary" /> Shop Performance (30 days)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border hover:bg-transparent">
+                    <TableHead className="text-muted-foreground">Shop</TableHead>
+                    <TableHead className="text-muted-foreground text-right">Clients</TableHead>
+                    <TableHead className="text-muted-foreground text-right">Appointments</TableHead>
+                    <TableHead className="text-muted-foreground text-right">No-Shows</TableHead>
+                    <TableHead className="text-muted-foreground text-right">Revenue</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {platformStats.shop_breakdown.map((s) => (
+                    <TableRow key={s.id} className="border-border hover:bg-accent/30" data-testid={`breakdown-row-${s.id}`}>
+                      <TableCell>
+                        <p className="font-medium">{s.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">/{s.slug}</p>
+                      </TableCell>
+                      <TableCell className="text-right font-mono">{s.total_clients}</TableCell>
+                      <TableCell className="text-right font-mono">{s.month_appointments}</TableCell>
+                      <TableCell className="text-right">
+                        <Badge className={s.no_show_rate > 10 ? "bg-red-500/20 text-red-400" : "bg-yellow-500/20 text-yellow-400"}>
+                          {s.month_no_shows} ({s.no_show_rate}%)
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-emerald-400">${s.month_revenue.toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Shop List */}
           <div className="lg:col-span-1 space-y-3">
