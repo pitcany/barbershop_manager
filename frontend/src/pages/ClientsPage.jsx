@@ -27,8 +27,8 @@ import {
   TableRow,
 } from "../components/ui/table";
 import { toast } from "sonner";
-import { 
-  Search, 
+import {
+  Search,
   User,
   Phone,
   Mail,
@@ -65,7 +65,7 @@ export default function ClientsPage() {
       const params = new URLSearchParams();
       if (searchTerm) params.append("search", searchTerm);
       params.append("limit", "100");
-      
+
       const response = await axios.get(`${API}/clients?${params}`);
       setClients(response.data.clients);
     } catch (error) {
@@ -121,7 +121,7 @@ export default function ClientsPage() {
                   className="pl-10 bg-input/50 border-input"
                 />
               </div>
-              
+
               <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
                 <DialogTrigger asChild>
                   <Button data-testid="create-client-button" className="bg-primary text-primary-foreground">
@@ -239,8 +239,8 @@ export default function ClientsPage() {
                   </TableRow>
                 ) : (
                   clients.map((client) => (
-                    <TableRow 
-                      key={client.id} 
+                    <TableRow
+                      key={client.id}
                       className="border-border hover:bg-accent/30 cursor-pointer"
                       onClick={() => navigate(`/clients/${client.id}`)}
                       data-testid={`client-row-${client.id}`}

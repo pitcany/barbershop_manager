@@ -9,10 +9,13 @@ from .interfaces import (
 )
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
+import asyncio
 import os
 import logging
 
 logger = logging.getLogger(__name__)
+
+PROVIDER_TIMEOUT = 30  # seconds for external API calls
 
 
 class TwilioSMSProvider(SMSProvider):
@@ -43,20 +46,27 @@ class TwilioSMSProvider(SMSProvider):
     async def send_sms(self, message: SMSMessage) -> SMSResponse:
         if not self.client:
             return SMSResponse(success=False, error="Twilio not configured")
-        
+
         try:
-            msg = self.client.messages.create(
-                body=message.body,
-                from_=message.from_ or self.from_number,
-                to=message.to
+            msg = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.client.messages.create,
+                    body=message.body,
+                    from_=message.from_ or self.from_number,
+                    to=message.to
+                ),
+                timeout=PROVIDER_TIMEOUT
             )
-            
+
             logger.info(f"[TWILIO] Sent SMS to {message.to}: {msg.sid}")
-            
+
             return SMSResponse(
                 success=True,
                 message_id=msg.sid
             )
+        except asyncio.TimeoutError:
+            logger.error(f"[TWILIO] Timeout sending SMS to {message.to}")
+            return SMSResponse(success=False, error="Twilio request timed out")
         except Exception as e:
             logger.error(f"[TWILIO] Failed to send SMS: {e}")
             return SMSResponse(success=False, error=str(e))
@@ -64,16 +74,24 @@ class TwilioSMSProvider(SMSProvider):
     async def validate_webhook(self, url: str, params: dict, signature: str) -> bool:
         if not self.validator:
             return False
-        return self.validator.validate(url, params, signature)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self.validator.validate, url, params, signature),
+                timeout=PROVIDER_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.error("[TWILIO] Timeout validating webhook signature")
+            return False
 
 
 class StripePaymentProvider(PaymentProvider):
     """Real Stripe payment provider using emergentintegrations"""
-    
+
     def __init__(self, webhook_url: str = ""):
         self.api_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
+        self.webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
         self.default_webhook_url = webhook_url
-        
+
         if not self.api_key:
             logger.warning("Stripe API key not found")
     
@@ -156,21 +174,37 @@ class StripePaymentProvider(PaymentProvider):
     async def handle_webhook(self, request_body: bytes, signature: str) -> Dict[str, Any]:
         if not self.api_key:
             return {"error": "Stripe not configured"}
-        
+
+        if not self.webhook_secret:
+            logger.error("[STRIPE] STRIPE_WEBHOOK_SECRET not configured — rejecting webhook")
+            return {"error": "Webhook secret not configured"}
+
         try:
-            checkout = self._get_checkout()
-            webhook_response = await checkout.handle_webhook(request_body, signature)
-            
-            return {
-                "event_type": webhook_response.event_type,
-                "event_id": webhook_response.event_id,
-                "session_id": webhook_response.session_id,
-                "payment_status": webhook_response.payment_status,
-                "metadata": webhook_response.metadata
-            }
+            import stripe
+            stripe.api_key = self.api_key
+            event = stripe.Webhook.construct_event(
+                request_body, signature, self.webhook_secret
+            )
+        except stripe.error.SignatureVerificationError:
+            logger.warning("[STRIPE] Webhook signature verification failed")
+            return {"error": "Invalid signature"}
         except Exception as e:
-            logger.error(f"[STRIPE] Webhook error: {e}")
-            return {"error": str(e)}
+            logger.error(f"[STRIPE] Webhook parse error: {e}")
+            return {"error": "Webhook verification failed"}
+
+        # Process checkout.session.completed events
+        if event["type"] == "checkout.session.completed":
+            session = event["data"]["object"]
+            return {
+                "event_type": event["type"],
+                "session_id": session.get("id"),
+                "payment_status": session.get("payment_status"),
+            }
+
+        return {
+            "event_type": event["type"],
+            "status": "acknowledged",
+        }
 
 
 class SendGridEmailProvider(EmailProvider):
@@ -194,10 +228,10 @@ class SendGridEmailProvider(EmailProvider):
     async def send_email(self, message: EmailMessage) -> EmailResponse:
         if not self.client:
             return EmailResponse(success=False, error="SendGrid not configured")
-        
+
         try:
             from sendgrid.helpers.mail import Mail
-            
+
             mail = Mail(
                 from_email=message.from_email or self.sender_email,
                 to_emails=message.to,
@@ -205,17 +239,23 @@ class SendGridEmailProvider(EmailProvider):
                 html_content=message.html_content,
                 plain_text_content=message.plain_content
             )
-            
-            response = self.client.send(mail)
-            
+
+            response = await asyncio.wait_for(
+                asyncio.to_thread(self.client.send, mail),
+                timeout=PROVIDER_TIMEOUT
+            )
+
             success = response.status_code == 202
-            
+
             logger.info(f"[SENDGRID] Sent email to {message.to}: {response.status_code}")
-            
+
             return EmailResponse(
                 success=success,
                 message_id=str(response.headers.get("X-Message-Id", ""))
             )
+        except asyncio.TimeoutError:
+            logger.error(f"[SENDGRID] Timeout sending email to {message.to}")
+            return EmailResponse(success=False, error="SendGrid request timed out")
         except Exception as e:
             logger.error(f"[SENDGRID] Failed to send email: {e}")
             return EmailResponse(success=False, error=str(e))
@@ -283,14 +323,19 @@ class GoogleCalendarProvider(CalendarProvider):
                 event_body["location"] = event.location
             if event.attendee_email:
                 event_body["attendees"] = [{"email": event.attendee_email}]
-            
-            result = service.events().insert(
-                calendarId=calendar_id,
-                body=event_body
-            ).execute()
-            
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    service.events().insert(calendarId=calendar_id, body=event_body).execute
+                ),
+                timeout=PROVIDER_TIMEOUT
+            )
+
             logger.info(f"[GCAL] Created event: {result['id']}")
             return result["id"]
+        except asyncio.TimeoutError:
+            logger.error("[GCAL] Timeout creating calendar event")
+            return None
         except Exception as e:
             logger.error(f"[GCAL] Failed to create event: {e}")
             return None
@@ -307,13 +352,17 @@ class GoogleCalendarProvider(CalendarProvider):
                 "start": {"dateTime": event.start_time.isoformat(), "timeZone": "UTC"},
                 "end": {"dateTime": event.end_time.isoformat(), "timeZone": "UTC"},
             }
-            service.events().update(
-                calendarId=calendar_id,
-                eventId=event_id,
-                body=event_body
-            ).execute()
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    service.events().update(calendarId=calendar_id, eventId=event_id, body=event_body).execute
+                ),
+                timeout=PROVIDER_TIMEOUT
+            )
             logger.info(f"[GCAL] Updated event: {event_id}")
             return True
+        except asyncio.TimeoutError:
+            logger.error(f"[GCAL] Timeout updating event: {event_id}")
+            return False
         except Exception as e:
             logger.error(f"[GCAL] Failed to update event: {e}")
             return False
@@ -324,12 +373,17 @@ class GoogleCalendarProvider(CalendarProvider):
             return False
         
         try:
-            service.events().delete(
-                calendarId=calendar_id,
-                eventId=event_id
-            ).execute()
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    service.events().delete(calendarId=calendar_id, eventId=event_id).execute
+                ),
+                timeout=PROVIDER_TIMEOUT
+            )
             logger.info(f"[GCAL] Deleted event: {event_id}")
             return True
+        except asyncio.TimeoutError:
+            logger.error(f"[GCAL] Timeout deleting event: {event_id}")
+            return False
         except Exception as e:
             logger.error(f"[GCAL] Failed to delete event: {e}")
             return False
@@ -350,9 +404,12 @@ class GoogleCalendarProvider(CalendarProvider):
                 "timeMax": end_date.isoformat(),
                 "items": [{"id": calendar_id}]
             }
-            result = service.freebusy().query(body=body).execute()
+            result = await asyncio.wait_for(
+                asyncio.to_thread(service.freebusy().query(body=body).execute),
+                timeout=PROVIDER_TIMEOUT
+            )
             busy_slots = result.get("calendars", {}).get(calendar_id, {}).get("busy", [])
-            
+
             # Generate 30-min slots for business hours, mark busy ones
             slots = []
             current = start_date.replace(hour=9, minute=0, second=0, microsecond=0)
@@ -369,6 +426,9 @@ class GoogleCalendarProvider(CalendarProvider):
                     slots.append(CalendarSlot(start_time=current, end_time=end_time, available=available))
                 current += timedelta(minutes=30)
             return slots
+        except asyncio.TimeoutError:
+            logger.error("[GCAL] Timeout getting availability")
+            return []
         except Exception as e:
             logger.error(f"[GCAL] Failed to get availability: {e}")
             return []
@@ -389,9 +449,15 @@ class GoogleCalendarProvider(CalendarProvider):
                 "timeMax": end_time.isoformat(),
                 "items": [{"id": calendar_id}]
             }
-            result = service.freebusy().query(body=body).execute()
+            result = await asyncio.wait_for(
+                asyncio.to_thread(service.freebusy().query(body=body).execute),
+                timeout=PROVIDER_TIMEOUT
+            )
             busy = result.get("calendars", {}).get(calendar_id, {}).get("busy", [])
             return len(busy) == 0
+        except asyncio.TimeoutError:
+            logger.error("[GCAL] Timeout checking slot availability")
+            return True
         except Exception as e:
             logger.error(f"[GCAL] Failed to check availability: {e}")
             return True

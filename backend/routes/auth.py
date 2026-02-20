@@ -3,8 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import os
+import asyncio
+from html import escape
 
-from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit
+from deps import db, pwd_context, create_access_token, get_current_user, get_shop, check_rate_limit, batch_fetch_map
 from models import (
     Shop, LoginRequest, TokenResponse, PolicyUpdate,
     CreateBarberRequest, UpdateBarberRequest,
@@ -21,14 +23,20 @@ router = APIRouter()
 @router.post("/auth/login", response_model=TokenResponse)
 async def login(request: LoginRequest, raw_request: Request):
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"login:{client_ip}", max_requests=10, window_seconds=300):
+    if not await check_rate_limit(f"login:{client_ip}", max_requests=5, window_seconds=900):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
 
     admin = await db.admin_users.find_one({"username": request.username}, {"_id": 0})
     if not admin or not pwd_context.verify(request.password, admin["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = create_access_token({"sub": admin["id"], "username": admin["username"], "shop_id": admin["shop_id"]})
+    # Update last login
+    await db.admin_users.update_one(
+        {"id": admin["id"]},
+        {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
+    )
+
+    token = create_access_token({"sub": admin["id"], "username": admin["username"], "shop_id": admin["shop_id"], "role": admin.get("role", "shop_admin")})
     return TokenResponse(access_token=token, token_type="bearer")
 
 
@@ -64,40 +72,47 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     month_start = (now - timedelta(days=30)).isoformat()
 
-    # Today's appointments
-    today_count = await db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": today_start}})
+    # Parallelize all counting and aggregation queries
+    (
+        today_count,
+        month_total,
+        month_noshows,
+        recovered_result,
+        waitlist_count,
+        total_clients,
+        deposits_result,
+        messages_today_count,
+    ) = await asyncio.gather(
+        db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": today_start}}),
+        db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}}),
+        db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}, "status": "no_show"}),
+        db.events.aggregate([
+            {"$match": {"shop_id": shop.id, "created_at": {"$gte": month_start}, "revenue_impact": {"$gt": 0}}},
+            {"$group": {"_id": None, "total": {"$sum": "$revenue_impact"}}}
+        ]).to_list(1),
+        db.waitlist.count_documents({"shop_id": shop.id, "active": True}),
+        db.clients.count_documents({"shop_id": shop.id}),
+        db.payments.aggregate([
+            {"$match": {"shop_id": shop.id, "status": "completed", "payment_type": "deposit", "created_at": {"$gte": month_start}}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+        ]).to_list(1),
+        db.messages.count_documents({"shop_id": shop.id, "created_at": {"$gte": today_start}}),
+    )
+
+    revenue_recovered = recovered_result[0]["total"] if recovered_result else 0
+    deposits_collected = deposits_result[0]["total"] if deposits_result else 0
+    no_show_rate = round((month_noshows / month_total * 100) if month_total > 0 else 0, 1)
+
+    # Fetch upcoming appointments (cannot parallelize due to enrichment loop)
     upcoming = await db.appointments.find(
         {"shop_id": shop.id, "scheduled_at": {"$gte": now.isoformat()}, "status": {"$in": ["pending", "confirmed", "deposit_paid"]}},
         {"_id": 0}
     ).sort("scheduled_at", 1).limit(5).to_list(5)
 
+    client_ids = [apt.get("client_id") for apt in upcoming if apt.get("client_id")]
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1})
     for apt in upcoming:
-        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1, "phone": 1})
-        apt["client"] = client or {"name": "Unknown", "phone": ""}
-
-    # No-show rate (30 days)
-    month_total = await db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}})
-    month_noshows = await db.appointments.count_documents({"shop_id": shop.id, "scheduled_at": {"$gte": month_start}, "status": "no_show"})
-    no_show_rate = round((month_noshows / month_total * 100) if month_total > 0 else 0, 1)
-
-    # Revenue this month
-    revenue_pipeline = [
-        {"$match": {"shop_id": shop.id, "status": "completed", "scheduled_at": {"$gte": month_start}}},
-        {"$group": {"_id": None, "total": {"$sum": "$price"}}}
-    ]
-    revenue_result = await db.appointments.aggregate(revenue_pipeline).to_list(1)
-    revenue = revenue_result[0]["total"] if revenue_result else 0
-
-    # Deposits collected
-    deposits_pipeline = [
-        {"$match": {"shop_id": shop.id, "status": "completed", "payment_type": "deposit", "created_at": {"$gte": month_start}}},
-        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
-    ]
-    deposits_result = await db.payments.aggregate(deposits_pipeline).to_list(1)
-    deposits_collected = deposits_result[0]["total"] if deposits_result else 0
-
-    # Waitlist fills
-    waitlist_count = await db.waitlist.count_documents({"shop_id": shop.id, "active": True})
+        apt["client"] = clients_map.get(apt.get("client_id"), {"name": "Unknown", "phone": ""})
 
     # Recent events
     recent_events = await db.events.find(
@@ -108,13 +123,14 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
         "today_appointments": today_count,
         "upcoming_appointments": upcoming,
         "no_show_rate": no_show_rate,
-        "month_revenue": revenue,
+        "revenue_recovered": revenue_recovered,
         "deposits_collected": deposits_collected,
-        "active_waitlist": waitlist_count,
+        "waitlist_count": waitlist_count,
+        "messages_today": messages_today_count,
         "recent_events": recent_events,
-        "total_clients": await db.clients.count_documents({"shop_id": shop.id}),
-        "month_total_appointments": month_total,
-        "month_no_shows": month_noshows,
+        "total_clients": total_clients,
+        "appointments_month": month_total,
+        "no_shows_month": month_noshows,
     }
 
 
@@ -123,14 +139,31 @@ async def get_revenue_chart(shop: Shop = Depends(get_shop), days: int = 30):
     now = datetime.now(timezone.utc)
     start_date = (now - timedelta(days=days)).isoformat()
 
-    pipeline = [
-        {"$match": {"shop_id": shop.id, "scheduled_at": {"$gte": start_date}, "status": "completed"}},
-        {"$addFields": {"day": {"$substr": ["$scheduled_at", 0, 10]}}},
-        {"$group": {"_id": "$day", "revenue": {"$sum": "$price"}, "count": {"$sum": 1}}},
+    recovered_pipeline = [
+        {"$match": {"shop_id": shop.id, "created_at": {"$gte": start_date}, "revenue_impact": {"$gt": 0}}},
+        {"$addFields": {"day": {"$substr": ["$created_at", 0, 10]}}},
+        {"$group": {"_id": "$day", "total": {"$sum": "$revenue_impact"}}},
         {"$sort": {"_id": 1}}
     ]
-    data = await db.appointments.aggregate(pipeline).to_list(60)
-    return {"chart_data": [{"date": d["_id"], "revenue": d["revenue"], "appointments": d["count"]} for d in data]}
+    lost_pipeline = [
+        {"$match": {"shop_id": shop.id, "created_at": {"$gte": start_date}, "revenue_impact": {"$lt": 0}}},
+        {"$addFields": {"day": {"$substr": ["$created_at", 0, 10]}}},
+        {"$group": {"_id": "$day", "total": {"$sum": {"$abs": "$revenue_impact"}}}},
+        {"$sort": {"_id": 1}}
+    ]
+    recovered_data, lost_data = await asyncio.gather(
+        db.events.aggregate(recovered_pipeline).to_list(60),
+        db.events.aggregate(lost_pipeline).to_list(60),
+    )
+
+    recovered_map = {d["_id"]: d["total"] for d in recovered_data}
+    lost_map = {d["_id"]: d["total"] for d in lost_data}
+    all_dates = sorted(set(list(recovered_map.keys()) + list(lost_map.keys())))
+
+    return {"data": [
+        {"date": date, "recovered": recovered_map.get(date, 0), "lost": lost_map.get(date, 0)}
+        for date in all_dates
+    ]}
 
 
 # ==================== BARBERS & SERVICES ====================
@@ -233,6 +266,11 @@ async def delete_service(service_id: str, shop: Shop = Depends(get_shop)):
 @router.patch("/shop/details")
 async def update_shop_details(body: UpdateShopDetailsRequest, shop: Shop = Depends(get_shop)):
     update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    # Ensure slug uniqueness if changing it
+    if "slug" in update_data and update_data["slug"] != shop.slug:
+        existing = await db.shops.find_one({"slug": update_data["slug"], "id": {"$ne": shop.id}}, {"_id": 0, "id": 1})
+        if existing:
+            raise HTTPException(status_code=409, detail="A shop with this slug already exists")
     if update_data:
         update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         await db.shops.update_one({"id": shop.id}, {"$set": update_data})
@@ -253,13 +291,17 @@ async def get_today_schedule(shop: Shop = Depends(get_shop)):
         {"_id": 0}
     ).sort("scheduled_at", 1).to_list(100)
 
+    client_ids = [apt.get("client_id") for apt in appointments if apt.get("client_id")]
+    barber_ids = [apt.get("barber_id") for apt in appointments if apt.get("barber_id")]
+    service_ids = [apt.get("service_id") for apt in appointments if apt.get("service_id")]
+    clients_map = await batch_fetch_map(db.clients, client_ids, {"id": 1, "name": 1, "phone": 1})
+    barbers_map = await batch_fetch_map(db.barbers, barber_ids, {"id": 1, "name": 1})
+    services_map = await batch_fetch_map(db.services, service_ids, {"id": 1, "name": 1, "price": 1, "duration_minutes": 1})
+
     for apt in appointments:
-        client = await db.clients.find_one({"id": apt.get("client_id")}, {"_id": 0, "name": 1, "phone": 1})
-        apt["client"] = client or {"name": "Unknown", "phone": ""}
-        barber = await db.barbers.find_one({"id": apt.get("barber_id")}, {"_id": 0, "name": 1})
-        apt["barber"] = barber or {"name": "Unknown"}
-        service = await db.services.find_one({"id": apt.get("service_id")}, {"_id": 0, "name": 1, "price": 1, "duration_minutes": 1})
-        apt["service"] = service or {"name": "Unknown", "price": 0}
+        apt["client"] = clients_map.get(apt.get("client_id"), {"name": "Unknown", "phone": ""})
+        apt["barber"] = barbers_map.get(apt.get("barber_id"), {"name": "Unknown"})
+        apt["service"] = services_map.get(apt.get("service_id"), {"name": "Unknown", "price": 0})
 
     return {"appointments": appointments, "total": len(appointments)}
 
@@ -304,7 +346,7 @@ async def send_test_email(request_body: "SendTestEmailRequest", shop: Shop = Dep
             </div>
             <div style="padding: 30px; background-color: #18181b; color: #fafafa;">
                 <h2 style="color: #D4AF37;">Test Email</h2>
-                <p>{request_body.message}</p>
+                <p>{escape(request_body.message)}</p>
                 <hr style="border-color: #27272a; margin: 20px 0;">
                 <p style="color: #a1a1aa; font-size: 12px;">
                     This email was sent from {shop.name} to verify SendGrid integration.

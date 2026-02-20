@@ -6,7 +6,7 @@ import os
 import logging
 
 from deps import db
-from models import Shop, AppointmentStatus
+from models import Shop, AppointmentStatus, AuditProvider, AuditAction
 from providers import get_sms, get_payment, get_email
 from providers.interfaces import SMSMessage, EmailMessage
 from agents import FrontDeskAgent
@@ -34,14 +34,24 @@ async def twilio_inbound_webhook(request: Request):
             raise HTTPException(status_code=403, detail="Invalid signature")
 
     from_number = form_data.get("From", "")
+    to_number = form_data.get("To", "")
     body = form_data.get("Body", "").strip()
 
     if not from_number or not body:
         return JSONResponse(content={"status": "ignored", "reason": "missing data"})
 
-    shop_data = await db.shops.find_one({}, {"_id": 0})
+    # Route to the correct shop by matching the Twilio "To" number
+    shop_data = None
+    if to_number:
+        shop_data = await db.shops.find_one({"phone": to_number}, {"_id": 0})
+    # Fallback: single-shop mode (one atomic query to avoid TOCTOU race)
     if not shop_data:
-        return JSONResponse(content={"status": "error", "reason": "no shop"})
+        fallback = await db.shops.find({}, {"_id": 0}).to_list(2)
+        if len(fallback) == 1:
+            shop_data = fallback[0]
+    if not shop_data:
+        logger.warning("No shop matched for inbound SMS to=%s", to_number)
+        return JSONResponse(content={"status": "ignored", "reason": "no shop found"})
 
     shop = Shop(**shop_data)
 
@@ -98,12 +108,14 @@ async def twilio_inbound_webhook(request: Request):
         })
 
     audit = create_audit_logger(db, shop.id)
-    await audit.log_event({
-        "provider": "twilio",
-        "action": "inbound_sms",
-        "success": True,
-        "details": {"from": from_number, "body_length": len(body), "response_sent": bool(response_msg)},
-    })
+    await audit.log(
+        provider=AuditProvider.TWILIO,
+        action=AuditAction.RECEIVE_SMS,
+        entity_type="client",
+        entity_id=client["id"],
+        success=True,
+        metadata={"from": from_number, "body_length": len(body), "response_sent": bool(response_msg)},
+    )
 
     return JSONResponse(content={"status": "processed", "action": metadata.get("action") if metadata else None})
 

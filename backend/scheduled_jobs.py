@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from models import Shop, Client, Appointment, AppointmentStatus, MessageDirection
 from audit import create_audit_logger
 from sms_compliance import create_sms_service
+from deps import batch_fetch_map
 
 logger = logging.getLogger(__name__)
 
@@ -63,51 +64,43 @@ class AppointmentReminderJob:
             }
         }, {"_id": 0}).to_list(100)
         
-        # Filter out appointments that already have a reminder
-        appointments_needing_reminder = []
-        for apt in appointments:
-            # Check if reminder was already sent
-            reminder_exists = await self.db.messages.find_one({
+        # Batch check which appointments already have reminders
+        apt_ids = [apt["id"] for apt in appointments]
+        existing_reminders = await self.db.messages.distinct(
+            "appointment_id",
+            {
                 "shop_id": self.shop.id,
-                "client_id": apt["client_id"],
-                "appointment_id": apt["id"],
+                "appointment_id": {"$in": apt_ids},
                 "direction": MessageDirection.OUTBOUND.value,
-                "content": {"$regex": "Reminder:"}
-            })
-            
-            if not reminder_exists:
-                appointments_needing_reminder.append(apt)
-        
+                "$or": [
+                    {"message_type": "appointment_reminder"},
+                    {"content": {"$regex": "^Reminder:"}}
+                ]
+            }
+        )
+        reminded_set = set(existing_reminders)
+
+        appointments_needing_reminder = [
+            apt for apt in appointments if apt["id"] not in reminded_set
+        ]
+
         return appointments_needing_reminder
     
-    async def send_reminder(self, appointment: dict) -> bool:
+    async def send_reminder(self, appointment: dict, clients_map: dict, barbers_map: dict, services_map: dict) -> bool:
         """
         Send a reminder for a single appointment.
-        
+
         Returns True if sent successfully, False otherwise.
         """
-        # Get client
-        client = await self.db.clients.find_one(
-            {"id": appointment["client_id"]},
-            {"_id": 0}
-        )
-        
+        client = clients_map.get(appointment["client_id"])
         if not client:
             logger.warning(f"Client not found for appointment {appointment['id']}")
             return False
-        
-        # Get barber name
-        barber = await self.db.barbers.find_one(
-            {"id": appointment["barber_id"]},
-            {"_id": 0, "name": 1}
-        )
+
+        barber = barbers_map.get(appointment.get("barber_id"))
         barber_name = barber["name"] if barber else "your barber"
-        
-        # Get service name
-        service = await self.db.services.find_one(
-            {"id": appointment["service_id"]},
-            {"_id": 0, "name": 1}
-        )
+
+        service = services_map.get(appointment.get("service_id"))
         service_name = service["name"] if service else "your appointment"
         
         # Parse scheduled time
@@ -136,7 +129,7 @@ class AppointmentReminderJob:
                 "client_id": client["id"],
                 "appointment_id": appointment["id"],
                 "direction": MessageDirection.OUTBOUND.value,
-                "message_type": "sms",
+                "message_type": "appointment_reminder",
                 "content": message,
                 "twilio_sid": response.message_id,
                 "created_at": datetime.now(timezone.utc).isoformat()
@@ -151,27 +144,40 @@ class AppointmentReminderJob:
     async def run(self) -> dict:
         """
         Run the reminder job.
-        
+
         Returns a summary of actions taken.
         """
         logger.info(f"Running appointment reminder job for shop {self.shop.id}")
-        
+
         appointments = await self.get_appointments_needing_reminder()
-        
+
+        # Pre-fetch all clients, barbers, services needed for reminders
+        client_ids = [apt["client_id"] for apt in appointments if apt.get("client_id")]
+        barber_ids = [apt["barber_id"] for apt in appointments if apt.get("barber_id")]
+        service_ids = [apt["service_id"] for apt in appointments if apt.get("service_id")]
+
+        clients_map = await batch_fetch_map(self.db.clients, client_ids)
+        barbers_map = await batch_fetch_map(self.db.barbers, barber_ids, {"id": 1, "name": 1})
+        services_map = await batch_fetch_map(self.db.services, service_ids, {"id": 1, "name": 1})
+
         results = {
             "total_found": len(appointments),
             "sent": 0,
             "failed": 0,
             "blocked": 0
         }
-        
+
         for apt in appointments:
-            success = await self.send_reminder(apt)
-            if success:
-                results["sent"] += 1
-            else:
+            try:
+                success = await self.send_reminder(apt, clients_map, barbers_map, services_map)
+                if success:
+                    results["sent"] += 1
+                else:
+                    results["failed"] += 1
+            except Exception as e:
+                logger.error(f"Unexpected error sending reminder for {apt.get('id', '?')}: {e}")
                 results["failed"] += 1
-        
+
         logger.info(f"Reminder job complete: {results}")
         return results
 

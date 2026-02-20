@@ -6,11 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
-import { 
-  Calendar, 
-  DollarSign, 
-  Users, 
-  MessageSquare, 
+import {
+  Calendar,
+  DollarSign,
+  Users,
+  MessageSquare,
   TrendingUp,
   TrendingDown,
   AlertTriangle,
@@ -65,6 +65,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState(null);
   const [chartData, setChartData] = useState([]);
   const [todaySchedule, setTodaySchedule] = useState([]);
+  const [shopSlug, setShopSlug] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { fetchData(); }, []);
@@ -81,8 +82,16 @@ export default function DashboardPage() {
       setTodaySchedule(scheduleRes.data.appointments || []);
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error);
+      toast.error("Failed to load dashboard data");
     } finally {
       setLoading(false);
+    }
+    // Fetch shop slug separately so a failure doesn't break the dashboard
+    try {
+      const shopRes = await axios.get(`${API}/shop`);
+      setShopSlug(shopRes.data.slug || "");
+    } catch {
+      // Non-critical — dashboard renders fine without the booking link slug
     }
   };
 
@@ -144,7 +153,7 @@ export default function DashboardPage() {
                 <Link2 className="w-5 h-5 text-emerald-400" />
                 <div>
                   <p className="text-sm font-medium">Online Booking Link</p>
-                  <code className="text-xs text-muted-foreground font-mono">{window.location.origin}/book</code>
+                  <code className="text-xs text-muted-foreground font-mono">{window.location.origin}/book{shopSlug ? `/${shopSlug}` : ""}</code>
                 </div>
               </div>
               <Button
@@ -153,7 +162,8 @@ export default function DashboardPage() {
                 data-testid="dashboard-copy-booking-link"
                 className="gap-2"
                 onClick={() => {
-                  navigator.clipboard.writeText(`${window.location.origin}/book`)
+                  const link = `${window.location.origin}/book${shopSlug ? `/${shopSlug}` : ""}`;
+                  navigator.clipboard.writeText(link)
                     .then(() => toast.success("Booking link copied!"))
                     .catch(() => toast.error("Failed to copy"));
                 }}

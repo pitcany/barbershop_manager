@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API } from "../App";
@@ -10,6 +10,7 @@ import { ScrollArea } from "../components/ui/scroll-area";
 import { Badge } from "../components/ui/badge";
 import { Switch } from "../components/ui/switch";
 import { Label } from "../components/ui/label";
+import { toast } from "sonner";
 import { 
   MessageSquare, 
   Search, 
@@ -88,6 +89,7 @@ export default function ConversationsPage() {
       setConversations(response.data.conversations);
     } catch (error) {
       console.error("Failed to fetch conversations:", error);
+      toast.error("Failed to load conversations");
     } finally {
       setLoading(false);
     }
@@ -106,6 +108,7 @@ export default function ConversationsPage() {
       }
     } catch (error) {
       console.error("Failed to fetch messages:", error);
+      toast.error("Failed to load messages");
     }
   };
 
@@ -170,9 +173,12 @@ export default function ConversationsPage() {
     }
   };
 
-  const filteredConversations = conversations.filter(conv => 
-    conv.client?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    conv.client?.phone?.includes(searchTerm)
+  const filteredConversations = useMemo(() =>
+    conversations.filter(conv =>
+      conv.client?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      conv.client?.phone?.includes(searchTerm)
+    ),
+    [conversations, searchTerm]
   );
 
   return (

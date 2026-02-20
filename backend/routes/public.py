@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+import re
 import uuid
 import logging
 
@@ -15,33 +16,55 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Must match the slug validators in models.py
+_SLUG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$')
 
-async def _get_shop():
-    """Get shop (for public endpoints where no auth is needed)"""
-    shop_data = await db.shops.find_one({}, {"_id": 0})
+
+async def _get_shop_by_slug(shop_slug: str) -> Shop:
+    """Resolve a shop by its URL slug.
+
+    Validates slug format before querying to reject obviously invalid
+    slugs with a 400 instead of hitting the DB for a guaranteed miss.
+    """
+    if not shop_slug or len(shop_slug) < 3 or len(shop_slug) > 50 or not _SLUG_RE.match(shop_slug):
+        raise HTTPException(status_code=400, detail="Invalid shop slug format")
+    shop_data = await db.shops.find_one({"slug": shop_slug}, {"_id": 0})
     if not shop_data:
-        raise HTTPException(status_code=500, detail="Shop not configured")
+        raise HTTPException(status_code=404, detail="Shop not found")
     return Shop(**shop_data)
 
 
-@router.get("/public/shop-info")
-async def get_public_shop_info():
-    shop_data = await db.shops.find_one({}, {"_id": 0, "name": 1, "phone": 1, "address": 1, "business_hours": 1})
-    if not shop_data:
-        raise HTTPException(status_code=404, detail="Shop not found")
-    return shop_data
+async def _get_single_shop() -> Shop:
+    """Fallback: return the only shop if exactly one exists (backward compat).
+
+    Fetches at most 2 docs in a single query to avoid a TOCTOU race between
+    count_documents and find_one (a second shop inserted between the two calls
+    would make find_one return an arbitrary document).
+    """
+    shops = await db.shops.find({}, {"_id": 0}).to_list(2)
+    if len(shops) != 1:
+        raise HTTPException(status_code=400, detail="Shop slug required. Use /api/public/s/{shop_slug}/...")
+    return Shop(**shops[0])
 
 
-@router.get("/public/barbers")
-async def get_public_barbers():
-    shop = await _get_shop()
+# ==================== SLUG-BASED PUBLIC ENDPOINTS ====================
+
+@router.get("/public/s/{shop_slug}/shop-info")
+async def get_public_shop_info_by_slug(shop_slug: str):
+    shop = await _get_shop_by_slug(shop_slug)
+    return {"name": shop.name, "phone": shop.phone, "address": shop.address, "business_hours": shop.business_hours, "slug": shop.slug}
+
+
+@router.get("/public/s/{shop_slug}/barbers")
+async def get_public_barbers_by_slug(shop_slug: str):
+    shop = await _get_shop_by_slug(shop_slug)
     barbers = await db.barbers.find({"shop_id": shop.id, "active": True}, {"_id": 0, "id": 1, "name": 1}).to_list(50)
     return {"barbers": barbers}
 
 
-@router.get("/public/services")
-async def get_public_services():
-    shop = await _get_shop()
+@router.get("/public/s/{shop_slug}/services")
+async def get_public_services_by_slug(shop_slug: str):
+    shop = await _get_shop_by_slug(shop_slug)
     services = await db.services.find(
         {"shop_id": shop.id, "active": True},
         {"_id": 0, "id": 1, "name": 1, "description": 1, "duration_minutes": 1, "price": 1}
@@ -49,18 +72,16 @@ async def get_public_services():
     return {"services": services}
 
 
-@router.get("/public/availability")
-async def get_public_availability(
+@router.get("/public/s/{shop_slug}/availability")
+async def get_public_availability_by_slug(
+    shop_slug: str,
     date: str,
     barber_id: Optional[str] = None,
     service_id: Optional[str] = None,
-    raw_request: Request = None,
 ):
-    """Get available slots for a given date (public, no auth)"""
-    shop = await _get_shop()
+    shop = await _get_shop_by_slug(shop_slug)
     scheduler = create_scheduling_engine(db, shop.model_dump())
 
-    # Determine duration from service
     duration = 30
     if service_id:
         service = await db.services.find_one({"id": service_id, "shop_id": shop.id}, {"_id": 0})
@@ -76,12 +97,11 @@ async def get_public_availability(
     return {"slots": [s.to_dict() for s in slots], "date": date}
 
 
-@router.post("/public/book")
-async def public_book_appointment(request: Request):
-    """Public booking endpoint — creates appointment + returns deposit checkout if needed"""
+async def _do_book_appointment(shop: Shop, shop_slug: str, request: Request):
+    """Core booking logic shared by slug-based and backward-compat endpoints."""
     raw_request = request
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"public-book:{client_ip}", max_requests=10, window_seconds=3600):
+    if not await check_rate_limit(f"public-book:{client_ip}", max_requests=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     body = await request.json()
@@ -96,8 +116,6 @@ async def public_book_appointment(request: Request):
 
     if not name or not phone or not barber_id or not service_id or not scheduled_at:
         raise HTTPException(status_code=400, detail="Missing required fields: name, phone, barber_id, service_id, scheduled_at")
-
-    shop = await _get_shop()
 
     # Validate barber and service
     barber = await db.barbers.find_one({"id": barber_id, "shop_id": shop.id, "active": True}, {"_id": 0})
@@ -155,14 +173,13 @@ async def public_book_appointment(request: Request):
             "updated_at": now_iso,
         }
         await db.clients.insert_one(client)
-        client.pop("_id", None)
+        client = {k: v for k, v in client.items() if k != "_id"}
 
     # Determine if deposit is required (smart enforcement)
     deposit_required = False
     hours_until = (scheduled_dt - datetime.now(timezone.utc)).total_seconds() / 3600
     if hours_until <= shop.deposit_required_hours:
         deposit_required = True
-    # Also check no-show history
     if client:
         no_shows = client.get("no_shows", 0) if isinstance(client, dict) else 0
         if no_shows > 0:
@@ -191,7 +208,7 @@ async def public_book_appointment(request: Request):
     }
 
     await db.appointments.insert_one(appointment)
-    appointment.pop("_id", None)
+    appointment = {k: v for k, v in appointment.items() if k != "_id"}
 
     # Sync to Google Calendar
     try:
@@ -224,8 +241,10 @@ async def public_book_appointment(request: Request):
     if deposit_required:
         try:
             origin = request.headers.get("x-origin", str(request.base_url).rstrip("/"))
-            success_url = f"{origin}/book/confirmation?appointment_id={appointment_id}&session_id={{CHECKOUT_SESSION_ID}}"
-            cancel_url = f"{origin}/book?payment_cancelled=true&appointment_id={appointment_id}"
+            # Legacy shops with empty slug use /book/ paths; slug-based shops use /book/{slug}/
+            book_path = f"/book/{shop_slug}" if shop_slug else "/book"
+            success_url = f"{origin}{book_path}/confirmation?appointment_id={appointment_id}&session_id={{CHECKOUT_SESSION_ID}}"
+            cancel_url = f"{origin}{book_path}?payment_cancelled=true&appointment_id={appointment_id}"
 
             metadata = {
                 "appointment_id": appointment_id,
@@ -286,6 +305,13 @@ async def public_book_appointment(request: Request):
     return result
 
 
+@router.post("/public/s/{shop_slug}/book")
+async def public_book_appointment_by_slug(shop_slug: str, request: Request):
+    """Public booking endpoint — creates appointment + returns deposit checkout if needed"""
+    shop = await _get_shop_by_slug(shop_slug)
+    return await _do_book_appointment(shop, shop_slug, request)
+
+
 @router.get("/public/appointment/{appointment_id}")
 async def get_public_appointment(appointment_id: str):
     """Get appointment status (public, for confirmation page)"""
@@ -306,17 +332,11 @@ async def get_public_appointment(appointment_id: str):
     return apt
 
 
-@router.post("/public/sms-consent")
-async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
+async def _do_submit_sms_consent(shop: Shop, request: SMSConsentRequest, raw_request: Request):
+    """Core SMS consent logic shared by slug-based and backward-compat endpoints."""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
-    if not check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
+    if not await check_rate_limit(f"sms-consent:{client_ip}", max_requests=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
-
-    shop_data = await db.shops.find_one({}, {"_id": 0})
-    if not shop_data:
-        raise HTTPException(status_code=500, detail="Shop not configured")
-
-    shop = Shop(**shop_data)
 
     client_data = await db.clients.find_one({"shop_id": shop.id, "phone": request.phone}, {"_id": 0})
     consent_timestamp = datetime.now(timezone.utc).isoformat() if request.consent else None
@@ -341,9 +361,80 @@ async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
             "sms_consent": request.consent,
             "sms_consent_timestamp": consent_timestamp,
             "sms_consent_source": "web_form",
+            "email": None,
+            "no_shows": 0,
+            "total_appointments": 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.clients.insert_one(client_data)
 
     return {"message": "Consent recorded", "consent": request.consent}
+
+
+@router.post("/public/s/{shop_slug}/sms-consent")
+async def submit_sms_consent_by_slug(shop_slug: str, request: SMSConsentRequest, raw_request: Request):
+    shop = await _get_shop_by_slug(shop_slug)
+    return await _do_submit_sms_consent(shop, request, raw_request)
+
+
+# ==================== BACKWARD-COMPAT (single-shop fallback) ====================
+
+@router.get("/public/shop-info")
+async def get_public_shop_info():
+    shop = await _get_single_shop()
+    return {"name": shop.name, "phone": shop.phone, "address": shop.address, "business_hours": shop.business_hours, "slug": shop.slug}
+
+
+@router.get("/public/barbers")
+async def get_public_barbers():
+    shop = await _get_single_shop()
+    barbers = await db.barbers.find({"shop_id": shop.id, "active": True}, {"_id": 0, "id": 1, "name": 1}).to_list(50)
+    return {"barbers": barbers}
+
+
+@router.get("/public/services")
+async def get_public_services():
+    shop = await _get_single_shop()
+    services = await db.services.find(
+        {"shop_id": shop.id, "active": True},
+        {"_id": 0, "id": 1, "name": 1, "description": 1, "duration_minutes": 1, "price": 1}
+    ).to_list(50)
+    return {"services": services}
+
+
+@router.get("/public/availability")
+async def get_public_availability(
+    date: str,
+    barber_id: Optional[str] = None,
+    service_id: Optional[str] = None,
+):
+    shop = await _get_single_shop()
+    scheduler = create_scheduling_engine(db, shop.model_dump())
+
+    duration = 30
+    if service_id:
+        service = await db.services.find_one({"id": service_id, "shop_id": shop.id}, {"_id": 0})
+        if service:
+            duration = service.get("duration_minutes", 30)
+
+    try:
+        target = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601.")
+
+    slots = await scheduler.get_available_slots(date=target, barber_id=barber_id, duration_minutes=duration)
+    return {"slots": [s.to_dict() for s in slots], "date": date}
+
+
+@router.post("/public/book")
+async def public_book_appointment(request: Request):
+    """Backward-compat: delegate to shared booking logic when single shop"""
+    shop = await _get_single_shop()
+    return await _do_book_appointment(shop, shop.slug, request)
+
+
+@router.post("/public/sms-consent")
+async def submit_sms_consent(request: SMSConsentRequest, raw_request: Request):
+    shop = await _get_single_shop()
+    return await _do_submit_sms_consent(shop, request, raw_request)

@@ -2,12 +2,13 @@ import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../App";
 import { Button } from "../ui/button";
-import { 
-  LayoutDashboard, 
-  MessageSquare, 
-  Calendar, 
-  Users, 
-  Settings, 
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Calendar,
+  Users,
+  UserRound,
+  Settings,
   LogOut,
   Scissors,
   Menu,
