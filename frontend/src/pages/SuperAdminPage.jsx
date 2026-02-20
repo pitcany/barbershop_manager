@@ -34,12 +34,17 @@ import {
   UserPlus,
   Eye,
   EyeOff,
+  Calendar,
+  DollarSign,
+  AlertTriangle,
+  TrendingUp,
 } from "lucide-react";
 
 export default function SuperAdminPage() {
   const { user } = useAuth();
   const [shops, setShops] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [platformStats, setPlatformStats] = useState(null);
 
   // Create shop dialog
   const [shopDialogOpen, setShopDialogOpen] = useState(false);
