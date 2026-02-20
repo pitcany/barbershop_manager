@@ -17,6 +17,7 @@ const ClientDetailPage = lazy(() => import("./pages/ClientDetailPage"));
 const ReportingPage = lazy(() => import("./pages/ReportingPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const ManagePage = lazy(() => import("./pages/ManagePage"));
+const SuperAdminPage = lazy(() => import("./pages/SuperAdminPage"));
 const PaymentSuccessPage = lazy(() => import("./pages/PaymentSuccessPage"));
 const PaymentCancelPage = lazy(() => import("./pages/PaymentCancelPage"));
 const BookingPage = lazy(() => import("./pages/BookingPage"));
@@ -202,6 +203,11 @@ function App() {
               <Route path="/manage" element={
                 <ProtectedRoute>
                   <ManagePage />
+                </ProtectedRoute>
+              } />
+              <Route path="/admin" element={
+                <ProtectedRoute>
+                  <SuperAdminPage />
                 </ProtectedRoute>
               } />
               <Route path="/settings" element={
