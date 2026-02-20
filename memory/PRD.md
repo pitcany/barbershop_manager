@@ -7,97 +7,57 @@ Build a production-grade multi-shop SaaS platform named "barbershop-autopilot" t
 - **Backend**: FastAPI + MongoDB + APScheduler
 - **Frontend**: React + Tailwind + Shadcn/UI + Recharts
 - **Auth**: JWT + bcrypt (super_admin + shop_admin roles)
-- **External Services**: Provider abstraction (real/mock) for Twilio, Stripe, SendGrid, Google Calendar
+- **Multi-tenancy**: Every model has shop_id, unique slug index, global username uniqueness
 
 ### Code Structure
 ```
 /app/backend/
-  server.py          # App init, CORS, startup, seed
-  deps.py            # Shared: db, auth, rate limiting, get_super_admin
-  models.py          # Pydantic models (Shop, Barber, Service, CRUD requests)
-  routes/
-    admin.py         # Super-admin: shop CRUD, shop admin CRUD
-    auth.py          # Auth, shop details, dashboard, barbers/services CRUD, today-schedule
-    appointments.py  # Appointment CRUD, scheduling, availability
-    clients.py       # Clients, conversations, waitlist
-    payments.py      # Stripe payments
-    calendar.py      # Google Calendar OAuth
-    jobs.py          # Scheduler jobs, reporting, audit, retention
-    public.py        # Public booking portal + SMS consent
-    webhooks.py      # Twilio + Stripe webhooks
-  providers/         # Provider abstraction (interfaces, mock, real)
-  agents/            # Business logic agents
+  server.py, deps.py, models.py
+  routes/ (admin.py, auth.py, appointments.py, clients.py, payments.py, calendar.py, jobs.py, public.py, webhooks.py)
+  providers/, agents/, scheduler.py
 /app/frontend/src/
-  pages/
-    SuperAdminPage.jsx         # Platform admin: manage shops + admins
-    DashboardPage.jsx          # Dashboard with Today's Schedule + Booking Link
-    AppointmentsPage.jsx       # Appointments list + New Appointment modal
-    ManagePage.jsx             # Barber & Service CRUD
-    SettingsPage.jsx           # Editable shop details, policies, booking link
-    ClientsPage.jsx            # Client list
-    BookingPage.jsx            # Public self-service booking wizard
-    + other pages...
-  components/layout/Layout.jsx  # Sidebar with role-based Platform Admin link
+  pages/ (SuperAdminPage, DashboardPage, AppointmentsPage, ManagePage, SettingsPage, ClientsPage, BookingPage, etc.)
+  components/layout/Layout.jsx
 ```
 
-## What's Been Implemented
+## Completed Features
 
-### Phase 1-8: Core MVP through Client Self-Service Booking
-- All database models + provider abstraction layer
-- Agent system (FrontDesk, NoShow, Waitlist, OwnerOps, RetentionRebook)
-- Full admin dashboard with all management pages
+### Core MVP (Phases 1-8)
+- Agent system, scheduling engine, client management, waitlist
 - Stripe Payments (REAL), Google Calendar (REAL OAuth2), SendGrid Email (REAL)
-- Client self-service booking portal at /book/:shopSlug
-- server.py refactor into 8 modular route files
+- Client self-service booking at /book/:shopSlug
+- Modular backend (8 route files)
 
-### Phase 9: Manager Workflow P0 Fixes
-- "New Appointment" button on Appointments page
-- Barber & Service Management page at /manage
-- "Today's Schedule" timeline on Dashboard
+### Manager Workflow Fixes (Phase 9-10)
+- New Appointment button, Barber/Service CRUD, Today's Schedule, editable shop details, booking link, cleaned client list
 
-### Phase 10: P1 Improvements
-- Editable shop details in Settings
-- Shareable booking link in Settings + Dashboard
-- Removed MongoDB IDs from client list
-
-### Phase 11: Super Admin Dashboard (Feb 20, 2026) — JUST COMPLETED
-- **Platform Admin page** at `/admin` — list all shops, create new shops, view shop details
-- **Shop admin management** — create admins per shop, list admins, password visibility toggle
-- **Role-based navigation** — "Platform Admin" link visible only for super_admin users
-- **Auto-slug generation** — shop name auto-generates URL slug
-- **Booking link per shop** — copy booking link for any shop from admin panel
-- **Backend already existed**: admin.py with shop CRUD + admin CRUD + role-based guards
-- **DB fix**: Added `role: super_admin` to existing admin user (was missing from old seed)
-- 100% test pass rate (16 backend + all frontend)
-
-## Multi-Shop Architecture
-- Every data model has `shop_id` for data isolation
-- `super_admin` role for platform-level operations
-- `shop_admin` role for shop-level operations
-- Unique slug index for multi-tenancy
-- Global username uniqueness (login resolves by username without shop context)
-- Public booking via `/book/:shopSlug`
+### Multi-Shop Platform Admin (Phase 11-12, Feb 20 2026) — LATEST
+- **Platform Overview Dashboard** — aggregate stats (total shops, 30d appointments, revenue, no-show rate)
+- **Per-Shop Performance Table** — breakdown by shop (clients, appointments, no-shows, revenue)
+- **Shop Management** — create/list shops, view details, copy booking links
+- **Admin Management** — create/list shop admins per shop
+- **Role-based UI** — Platform Admin nav link visible only for super_admin
+- Backend: GET /api/admin/platform-stats, full shop/admin CRUD
+- 100% test pass on all iterations (11-14)
 
 ## Integration Status
-| Service | Status | Details |
-|---------|--------|---------|
-| SendGrid Email | **Active** | User-provided API key |
-| Stripe Payments | **Active** | Using emergent test key |
-| Google Calendar | **Active** | OAuth2 with user-provided credentials |
-| Twilio SMS | Mocked | TWILIO_ENABLED=false, awaiting credentials |
+| Service | Status |
+|---------|--------|
+| Stripe Payments | **Active** |
+| Google Calendar | **Active** |
+| SendGrid Email | **Active** |
+| Twilio SMS | Mocked (awaiting credentials) |
 
 ## Prioritized Backlog
-
-### P1 (Next)
+### P1
 - [ ] Celery + Redis migration (replace APScheduler)
-- [ ] Billing infrastructure (Stripe Connect — platform fee on deposits)
-- [ ] Enable Twilio for real SMS (pending credentials)
+- [ ] Billing infrastructure (Stripe Connect)
+- [ ] Enable Twilio SMS
 
-### P2 (Future)
-- [ ] MongoDB to PostgreSQL migration
-- [ ] Enhanced multi-shop features (shop-level analytics, cross-shop reporting)
+### P2
+- [ ] MongoDB → PostgreSQL
+- [ ] Enhanced multi-shop analytics
 
 ## Credentials
-- **Super Admin**: username=admin, password=admin123 (role: super_admin)
-- **Test Shop Admin**: testadmin7903 / TestAdmin123! (created during testing)
+- **Super Admin**: admin / admin123
 - **Public Booking**: /book or /book/:shopSlug
