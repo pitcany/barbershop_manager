@@ -15,7 +15,8 @@ import {
   X,
   User,
   Wrench,
-  BarChart
+  BarChart,
+  Shield
 } from "lucide-react";
 
 const navItems = [
@@ -29,6 +30,8 @@ const navItems = [
   { path: "/jobs", label: "Jobs", icon: Settings },
   { path: "/settings", label: "Settings", icon: Scissors },
 ];
+
+const superAdminItem = { path: "/admin", label: "Platform Admin", icon: Shield };
 
 export default function Layout({ children, title }) {
   const { logout, user } = useAuth();
