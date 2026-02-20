@@ -107,7 +107,7 @@ export default function SuperAdminPage() {
       await axios.post(`${API}/admin/shops`, shopForm);
       toast.success("Shop created successfully");
       setShopDialogOpen(false);
-      fetchShops();
+      fetchData();
     } catch (e) {
       const detail = e.response?.data?.detail;
       // Handle Pydantic validation errors (array of objects) vs simple string errors
