@@ -102,6 +102,9 @@ async def startup_event():
     await db.waitlist.create_index([("shop_id", 1), ("active", 1)])
     await db.events.create_index([("shop_id", 1), ("created_at", -1)])
     await db.payments.create_index([("shop_id", 1), ("status", 1), ("payment_type", 1)])
+    await db.payment_transactions.create_index([("shop_id", 1), ("session_id", 1)])
+    await db.stripe_webhook_events.create_index("stripe_event_id", unique=True)
+    await db.stripe_webhook_events.create_index([("created_at", -1)])
 
     # job_runs: unique per (job_name, window_key) for idempotency; indexed for history queries
     await db.job_runs.create_index([("job_name", 1), ("window_key", 1)], unique=True)
@@ -197,6 +200,10 @@ async def seed_demo_data():
         "confirmation_window_hours": 24,
         "cancellation_window_hours": 4,
         "max_messages_per_day": 4,
+        "stripe_connect_account_id": None,
+        "stripe_charges_enabled": False,
+        "stripe_payouts_enabled": False,
+        "platform_fee_bps": 0,
         "retention_enabled": True,
         "retention_lapse_weeks": 4,
         "retention_cooldown_days": 7,
