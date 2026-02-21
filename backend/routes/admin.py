@@ -17,13 +17,7 @@ async def get_platform_stats(user: dict = Depends(get_super_admin)):
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     month_start = (now - timedelta(days=30)).isoformat()
 
-import asyncio
-from fastapi import APIRouter, Depends, HTTPException
-from datetime import datetime, timezone, timedelta
-import uuid
-
-from deps import db, pwd_context, get_super_admin
-from models import Shop, CreateShopRequest, CreateShopAdminRequest, UpdateShopDetailsRequest
+    shop_count, total_clients, today_apts, month_apts, month_no_shows, revenue_agg, shops_list = await asyncio.gather(
         db.shops.count_documents({}),
         db.clients.count_documents({}),
         db.appointments.count_documents({"scheduled_at": {"$gte": today_start}}),
