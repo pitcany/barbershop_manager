@@ -20,12 +20,22 @@ USE_CELERY_SCHEDULER = os.environ.get("USE_CELERY_SCHEDULER", "false").lower() =
 def _get_scheduler_status_apscheduler() -> dict:
     from scheduler import get_job_status
     jobs = get_job_status()
-    return {"scheduler_mode": "apscheduler", "jobs": jobs, "recent_runs": []}
+    return {
+        "scheduler_mode": "apscheduler",
+        "scheduler": "running",
+        "jobs": jobs,
+        "recent_runs": [],
+    }
 
 
 async def _get_scheduler_status_celery() -> dict:
     runs = await db.job_runs.find({}, {"_id": 0}).sort("started_at", -1).limit(10).to_list(10)
-    return {"scheduler_mode": "celery", "jobs": [], "recent_runs": runs}
+    return {
+        "scheduler_mode": "celery",
+        "scheduler": "running",
+        "jobs": [],
+        "recent_runs": runs,
+    }
 
 
 # ==================== SCHEDULED JOBS ====================
@@ -37,8 +47,21 @@ async def run_reminder_job(shop: Shop = Depends(get_shop)):
         task = run_reminders_task.delay()
         return {"status": "enqueued", "task_id": task.id, "mode": "celery"}
     from scheduled_jobs import run_reminder_job_for_all_shops
-    results = await run_reminder_job_for_all_shops(db)
-    return {"status": "completed", "results": results, "mode": "apscheduler"}
+    per_shop_results = await run_reminder_job_for_all_shops(db)
+    summary = {"total_found": 0, "sent": 0, "failed": 0, "blocked": 0}
+    for res in per_shop_results.values():
+        summary["total_found"] += int(res.get("total_found", 0))
+        summary["sent"] += int(res.get("sent", 0))
+        summary["failed"] += int(res.get("failed", 0))
+        summary["blocked"] += int(res.get("blocked", 0))
+    return {
+        "status": "completed",
+        # Keep legacy flat summary shape.
+        "results": summary,
+        # Expose richer multi-shop output without breaking old clients.
+        "results_by_shop": per_shop_results,
+        "mode": "apscheduler",
+    }
 
 
 @router.get("/jobs/reminders/preview")
@@ -77,14 +100,30 @@ async def run_daily_summary(shop: Shop = Depends(get_shop)):
         return {"status": "enqueued", "task_id": task.id, "mode": "celery"}
     agent = OwnerOpsAgent(db, shop.model_dump())
     result = await agent.send_daily_summary()
-    return {"message": "Daily summary executed", "result": result, "mode": "apscheduler"}
+    return {
+        # Legacy flat shape expected by tests.
+        "status": result.get("status"),
+        "stats": result.get("stats"),
+        "to": result.get("to"),
+        "error": result.get("error"),
+        # Current richer shape.
+        "message": "Daily summary executed",
+        "result": result,
+        "mode": "apscheduler",
+    }
 
 
 @router.get("/jobs/daily-summary/preview")
 async def preview_daily_summary(shop: Shop = Depends(get_shop)):
     agent = OwnerOpsAgent(db, shop.model_dump())
     data = await agent.compile_daily_stats()
-    return {"preview": data}
+    return {
+        # Legacy shape expected by tests.
+        "stats": data,
+        "shop_email": shop.email,
+        # Current shape.
+        "preview": data,
+    }
 
 
 @router.get("/jobs/status")
