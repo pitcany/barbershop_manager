@@ -21,7 +21,7 @@ JOB_NAME = "retention_sweep"
 
 def _get_window_key() -> str:
     """Daily idempotency window: retention:YYYY-MM-DD"""
-    return f"retention:{datetime.utcnow().strftime('%Y-%m-%d')}"
+    return f"retention:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
 
 
 def _build_db():

@@ -173,16 +173,44 @@ async def replay_job_run(run_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail=f"Can only replay failed runs; this run has status '{run.get('status')}'")
 
     job_name = run.get("job_name")
-    dispatch_map = {
-    if not USE_CELERY_SCHEDULER:
-        raise HTTPException(status_code=400, detail="Job replay only available in Celery mode")
-    
-    dispatch_map = {
-        "appointment_reminders": lambda: __import__("tasks.reminders", fromlist=["run_reminders_task"]).run_reminders_task,
-        "daily_summary": lambda: __import__("tasks.owner_ops", fromlist=["run_daily_summary_task"]).run_daily_summary_task,
-        "retention_sweep": lambda: __import__("tasks.retention", fromlist=["run_retention_task"]).run_retention_task,
+    if USE_CELERY_SCHEDULER:
+        dispatch_map = {
+            "appointment_reminders": lambda: __import__("tasks.reminders", fromlist=["run_reminders_task"]).run_reminders_task,
+            "daily_summary": lambda: __import__("tasks.owner_ops", fromlist=["run_daily_summary_task"]).run_daily_summary_task,
+            "retention_sweep": lambda: __import__("tasks.retention", fromlist=["run_retention_task"]).run_retention_task,
+        }
+        if job_name not in dispatch_map:
+            raise HTTPException(status_code=400, detail=f"Unknown job_name '{job_name}'")
+
+        task_fn = dispatch_map[job_name]()
+        task = task_fn.delay()
+        return {
+            "status": "enqueued",
+            "task_id": task.id,
+            "replayed_run_id": run_id,
+            "job_name": job_name,
+            "mode": "celery",
+        }
+
+    if job_name == "appointment_reminders":
+        from scheduled_jobs import run_reminder_job_for_all_shops
+        results = await run_reminder_job_for_all_shops(db)
+    elif job_name == "daily_summary":
+        from owner_ops_agent import run_daily_summary_for_all_shops
+        results = await run_daily_summary_for_all_shops(db)
+    elif job_name == "retention_sweep":
+        from retention_rebook_agent import run_retention_for_all_shops
+        results = await run_retention_for_all_shops(db)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown job_name '{job_name}'")
+
+    return {
+        "status": "completed",
+        "replayed_run_id": run_id,
+        "job_name": job_name,
+        "results": results,
+        "mode": "apscheduler",
     }
-    return {"status": "enqueued", "task_id": task.id, "replayed_run_id": run_id, "job_name": job_name}
 
 
 @router.get("/retention/outreach-history")
