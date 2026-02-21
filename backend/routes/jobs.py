@@ -174,15 +174,14 @@ async def replay_job_run(run_id: str, user: dict = Depends(get_current_user)):
 
     job_name = run.get("job_name")
     dispatch_map = {
+    if not USE_CELERY_SCHEDULER:
+        raise HTTPException(status_code=400, detail="Job replay only available in Celery mode")
+    
+    dispatch_map = {
         "appointment_reminders": lambda: __import__("tasks.reminders", fromlist=["run_reminders_task"]).run_reminders_task,
         "daily_summary": lambda: __import__("tasks.owner_ops", fromlist=["run_daily_summary_task"]).run_daily_summary_task,
         "retention_sweep": lambda: __import__("tasks.retention", fromlist=["run_retention_task"]).run_retention_task,
     }
-    if job_name not in dispatch_map:
-        raise HTTPException(status_code=400, detail=f"Unknown job_name '{job_name}'")
-
-    task_fn = dispatch_map[job_name]()
-    task = task_fn.delay()
     return {"status": "enqueued", "task_id": task.id, "replayed_run_id": run_id, "job_name": job_name}
 
 
