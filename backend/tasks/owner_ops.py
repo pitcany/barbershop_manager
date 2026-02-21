@@ -20,7 +20,7 @@ JOB_NAME = "daily_summary"
 
 
 def _get_window_key() -> str:
-    """Daily idempotency window: daily_summary:YYYY-MM-DD"""
+    return f"daily_summary:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
     return f"daily_summary:{datetime.utcnow().strftime('%Y-%m-%d')}"
 
 
