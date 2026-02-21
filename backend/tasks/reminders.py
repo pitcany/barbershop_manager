@@ -20,7 +20,7 @@ JOB_NAME = "appointment_reminders"
 
 
 def _get_window_key() -> str:
-    """Hourly idempotency window: reminders:YYYY-MM-DDTHH"""
+    return f"reminders:{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H')}"
     return f"reminders:{datetime.utcnow().strftime('%Y-%m-%dT%H')}"
 
 
