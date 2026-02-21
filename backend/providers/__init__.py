@@ -85,7 +85,9 @@ def get_email_provider(db=None) -> EmailProvider:
 
 def get_payment_provider(webhook_url: str = "") -> PaymentProvider:
     """Get payment provider based on STRIPE_ENABLED flag and key availability"""
-    stripe_enabled = _is_true(os.environ.get("STRIPE_ENABLED"))
+    stripe_enabled = _is_true(os.environ.get("STRIPE_ENABLED")) or _is_true(
+        os.environ.get("STRIPE_CONNECT_ENABLED")
+    )
     stripe_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
     
     if stripe_enabled and stripe_key:

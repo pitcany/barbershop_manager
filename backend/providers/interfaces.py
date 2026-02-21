@@ -131,7 +131,9 @@ class PaymentProvider(ABC):
         currency: str,
         success_url: str,
         cancel_url: str,
-        metadata: Dict[str, str]
+        metadata: Dict[str, str],
+        connect_account_id: Optional[str] = None,
+        application_fee_amount: Optional[int] = None,
     ) -> PaymentLink:
         """Create a payment link for deposits"""
         pass

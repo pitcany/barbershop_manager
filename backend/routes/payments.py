@@ -1,17 +1,13 @@
 """Stripe payment endpoints."""
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
 from datetime import datetime, timezone
-from typing import Optional
 import uuid
-import logging
 
 from deps import db, get_shop
 from models import Shop, AppointmentStatus
 from providers import get_payment
-from revenue_logger import log_no_show_fee_on_payment_success
-
-logger = logging.getLogger(__name__)
+from services.payment_service import apply_checkout_payment_update
+from services.stripe_connect import build_connect_context
 
 router = APIRouter()
 
@@ -36,6 +32,7 @@ async def create_deposit_payment(
         raise HTTPException(status_code=400, detail="Deposit already paid for this appointment")
 
     amount = float(shop.deposit_amount)
+    connect_context = build_connect_context(shop, amount)
 
     client_data = await db.clients.find_one({"id": appointment["client_id"], "shop_id": shop.id}, {"_id": 0})
 
@@ -52,7 +49,13 @@ async def create_deposit_payment(
 
     payment = get_payment()
     payment_link = await payment.create_payment_link(
-        amount=amount, currency="usd", success_url=success_url, cancel_url=cancel_url, metadata=metadata
+        amount=amount,
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+        connect_account_id=connect_context["connect_account_id"],
+        application_fee_amount=connect_context["application_fee_amount"],
     )
 
     await db.appointments.update_one(
@@ -79,6 +82,9 @@ async def create_deposit_payment(
         "status": "pending",
         "payment_type": "deposit",
         "metadata": metadata,
+        "connect_destination_account_id": connect_context["connect_account_id"],
+        "platform_fee_bps": connect_context["platform_fee_bps"],
+        "application_fee_amount": connect_context["application_fee_amount"],
         "created_at": now_iso,
         "updated_at": now_iso,
     })
@@ -93,6 +99,9 @@ async def create_deposit_payment(
         "stripe_session_id": payment_link.session_id,
         "status": "pending",
         "payment_type": "deposit",
+        "destination_account_id": connect_context["connect_account_id"],
+        "platform_fee_bps": connect_context["platform_fee_bps"],
+        "application_fee_amount": connect_context["application_fee_amount"],
         "created_at": now_iso,
         "updated_at": now_iso,
     })
@@ -117,37 +126,23 @@ async def get_payment_status(session_id: str, shop: Shop = Depends(get_shop)):
     payment = get_payment()
     stripe_status = await payment.get_payment_status(session_id)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-
     if stripe_status.payment_status == "paid":
-        result = await db.payment_transactions.update_one(
-            {"session_id": session_id, "payment_status": {"$ne": "paid"}},
-            {"$set": {"payment_status": "paid", "status": "completed", "updated_at": now_iso}},
+        await apply_checkout_payment_update(
+            db,
+            session_id=session_id,
+            payment_status=stripe_status.payment_status,
+            stripe_event_id=None,
+            payment_intent_id=stripe_status.metadata.get("payment_intent_id"),
+            destination_account_id=stripe_status.metadata.get("destination_account_id"),
+            application_fee_amount=stripe_status.metadata.get("application_fee_amount"),
         )
-        if result.modified_count > 0:
-            await db.payments.update_one(
-                {"stripe_session_id": session_id},
-                {"$set": {"status": "completed", "updated_at": now_iso}},
-            )
-            appointment_id = txn.get("appointment_id")
-            if appointment_id:
-                await db.appointments.update_one(
-                    {"id": appointment_id},
-                    {"$set": {"deposit_paid": True, "status": AppointmentStatus.DEPOSIT_PAID.value, "updated_at": now_iso}},
-                )
-                payment_record = await db.payments.find_one({"stripe_session_id": session_id}, {"_id": 0})
-                appointment = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
-                if payment_record and appointment:
-                    await log_no_show_fee_on_payment_success(db, payment_record, appointment)
 
     elif stripe_status.status == "expired":
-        await db.payment_transactions.update_one(
-            {"session_id": session_id},
-            {"$set": {"payment_status": "expired", "status": "expired", "updated_at": now_iso}},
-        )
-        await db.payments.update_one(
-            {"stripe_session_id": session_id},
-            {"$set": {"status": "failed", "updated_at": now_iso}},
+        await apply_checkout_payment_update(
+            db,
+            session_id=session_id,
+            payment_status=stripe_status.payment_status,
+            checkout_status=stripe_status.status,
         )
 
     return {
