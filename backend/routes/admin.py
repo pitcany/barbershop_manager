@@ -1,6 +1,7 @@
 """Super-admin shop management endpoints."""
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone, timedelta
+import asyncio
 import uuid
 
 from deps import db, pwd_context, get_super_admin
@@ -22,7 +23,7 @@ async def get_platform_stats(user: dict = Depends(get_super_admin)):
         db.appointments.count_documents({"scheduled_at": {"$gte": today_start}}),
         db.appointments.count_documents({"scheduled_at": {"$gte": month_start}}),
         db.appointments.count_documents({"scheduled_at": {"$gte": month_start}, "status": "no_show"}),
-        db.transactions.aggregate([
+        db.payment_transactions.aggregate([
             {"$match": {"status": "completed", "created_at": {"$gte": month_start}}},
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
         ]).to_list(1),
@@ -40,7 +41,7 @@ async def get_platform_stats(user: dict = Depends(get_super_admin)):
             db.appointments.count_documents({"shop_id": sid, "scheduled_at": {"$gte": month_start}}),
             db.appointments.count_documents({"shop_id": sid, "scheduled_at": {"$gte": month_start}, "status": "no_show"}),
             db.clients.count_documents({"shop_id": sid}),
-            db.transactions.aggregate([
+            db.payment_transactions.aggregate([
                 {"$match": {"shop_id": sid, "status": "completed", "created_at": {"$gte": month_start}}},
                 {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
             ]).to_list(1),
@@ -66,10 +67,6 @@ async def get_platform_stats(user: dict = Depends(get_super_admin)):
         "month_revenue": revenue,
         "shop_breakdown": shop_breakdown,
     }
-
-
-import asyncio
-
 
 @router.get("/admin/shops")
 async def list_shops(user: dict = Depends(get_super_admin)):
