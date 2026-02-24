@@ -121,6 +121,8 @@ async def get_dashboard_stats(shop: Shop = Depends(get_shop)):
 
     return {
         "today_appointments": today_count,
+        # Backward-compatible alias used by older tests/clients.
+        "appointments_today": today_count,
         "upcoming_appointments": upcoming,
         "no_show_rate": no_show_rate,
         "revenue_recovered": revenue_recovered,
@@ -383,6 +385,7 @@ async def health_check():
         "providers": {
             "twilio_enabled": os.environ.get("TWILIO_ENABLED", "false").lower() in ("true", "1", "yes"),
             "stripe_enabled": os.environ.get("STRIPE_ENABLED", "false").lower() in ("true", "1", "yes"),
+            "stripe_connect_enabled": os.environ.get("STRIPE_CONNECT_ENABLED", "false").lower() in ("true", "1", "yes"),
             "sendgrid_enabled": os.environ.get("SEND_EMAILS", "false").lower() in ("true", "1", "yes"),
             "calendar_enabled": os.environ.get("CALENDAR_ENABLED", "false").lower() in ("true", "1", "yes"),
         },

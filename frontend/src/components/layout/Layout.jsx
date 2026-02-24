@@ -15,7 +15,8 @@ import {
   X,
   User,
   Wrench,
-  BarChart
+  BarChart,
+  Shield
 } from "lucide-react";
 
 const navItems = [
@@ -29,6 +30,8 @@ const navItems = [
   { path: "/jobs", label: "Jobs", icon: Settings },
   { path: "/settings", label: "Settings", icon: Scissors },
 ];
+
+const superAdminItem = { path: "/admin", label: "Platform Admin", icon: Shield };
 
 export default function Layout({ children, title }) {
   const { logout, user } = useAuth();
@@ -93,6 +96,27 @@ export default function Layout({ children, title }) {
                 {item.label}
               </NavLink>
             ))}
+            {user?.role === "super_admin" && (
+              <>
+                <div className="mx-6 my-3 border-t border-border" />
+                <NavLink
+                  to={superAdminItem.path}
+                  onClick={() => setSidebarOpen(false)}
+                  className={({ isActive }) => `
+                    flex items-center gap-3 px-6 py-3 text-sm font-medium
+                    transition-colors duration-200
+                    ${isActive 
+                      ? 'bg-primary/10 text-primary border-r-2 border-primary' 
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+                    }
+                  `}
+                  data-testid="nav-platform admin"
+                >
+                  <superAdminItem.icon className="w-5 h-5" />
+                  {superAdminItem.label}
+                </NavLink>
+              </>
+            )}
           </nav>
 
           {/* User section */}
@@ -100,7 +124,7 @@ export default function Layout({ children, title }) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">{user?.username || "Admin"}</p>
-                <p className="text-xs text-muted-foreground">Shop Manager</p>
+                <p className="text-xs text-muted-foreground">{user?.role === "super_admin" ? "Platform Admin" : "Shop Manager"}</p>
               </div>
               <Button
                 variant="ghost"

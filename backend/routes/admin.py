@@ -1,6 +1,7 @@
 """Super-admin shop management endpoints."""
 from fastapi import APIRouter, Depends, HTTPException
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import asyncio
 import uuid
 
 from deps import db, pwd_context, get_super_admin
@@ -8,6 +9,64 @@ from models import Shop, CreateShopRequest, CreateShopAdminRequest, UpdateShopDe
 
 router = APIRouter()
 
+
+@router.get("/admin/platform-stats")
+async def get_platform_stats(user: dict = Depends(get_super_admin)):
+    """Aggregate stats across all shops for the platform overview."""
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    month_start = (now - timedelta(days=30)).isoformat()
+
+    shop_count, total_clients, today_apts, month_apts, month_no_shows, revenue_agg, shops_list = await asyncio.gather(
+        db.shops.count_documents({}),
+        db.clients.count_documents({}),
+        db.appointments.count_documents({"scheduled_at": {"$gte": today_start}}),
+        db.appointments.count_documents({"scheduled_at": {"$gte": month_start}}),
+        db.appointments.count_documents({"scheduled_at": {"$gte": month_start}, "status": "no_show"}),
+        db.payment_transactions.aggregate([
+            {"$match": {"status": "completed", "created_at": {"$gte": month_start}}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+        ]).to_list(1),
+        db.shops.find({}, {"_id": 0, "id": 1, "name": 1, "slug": 1}).to_list(200),
+    )
+
+    revenue = revenue_agg[0]["total"] if revenue_agg else 0
+    no_show_rate = round((month_no_shows / month_apts * 100), 1) if month_apts > 0 else 0
+
+    # Per-shop breakdown
+    shop_breakdown = []
+    for shop in shops_list:
+        sid = shop["id"]
+        s_apts, s_no_shows, s_clients, s_rev = await asyncio.gather(
+            db.appointments.count_documents({"shop_id": sid, "scheduled_at": {"$gte": month_start}}),
+            db.appointments.count_documents({"shop_id": sid, "scheduled_at": {"$gte": month_start}, "status": "no_show"}),
+            db.clients.count_documents({"shop_id": sid}),
+            db.payment_transactions.aggregate([
+                {"$match": {"shop_id": sid, "status": "completed", "created_at": {"$gte": month_start}}},
+                {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+            ]).to_list(1),
+        )
+        shop_breakdown.append({
+            "id": sid,
+            "name": shop["name"],
+            "slug": shop.get("slug", ""),
+            "month_appointments": s_apts,
+            "month_no_shows": s_no_shows,
+            "no_show_rate": round((s_no_shows / s_apts * 100), 1) if s_apts > 0 else 0,
+            "total_clients": s_clients,
+            "month_revenue": s_rev[0]["total"] if s_rev else 0,
+        })
+
+    return {
+        "total_shops": shop_count,
+        "total_clients": total_clients,
+        "today_appointments": today_apts,
+        "month_appointments": month_apts,
+        "month_no_shows": month_no_shows,
+        "no_show_rate": no_show_rate,
+        "month_revenue": revenue,
+        "shop_breakdown": shop_breakdown,
+    }
 
 @router.get("/admin/shops")
 async def list_shops(user: dict = Depends(get_super_admin)):

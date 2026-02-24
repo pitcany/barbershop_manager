@@ -11,6 +11,7 @@ from models import Shop, SMSConsentRequest
 from scheduling import create_scheduling_engine
 from providers import get_payment, get_calendar
 from providers.interfaces import CalendarEvent
+from services.stripe_connect import build_connect_context
 
 logger = logging.getLogger(__name__)
 
@@ -255,12 +256,16 @@ async def _do_book_appointment(shop: Shop, shop_slug: str, request: Request):
             }
 
             payment = get_payment()
+            amount = float(shop.deposit_amount)
+            connect_context = build_connect_context(shop, amount)
             payment_link = await payment.create_payment_link(
-                amount=float(shop.deposit_amount),
+                amount=amount,
                 currency="usd",
                 success_url=success_url,
                 cancel_url=cancel_url,
                 metadata=metadata,
+                connect_account_id=connect_context["connect_account_id"],
+                application_fee_amount=connect_context["application_fee_amount"],
             )
 
             # Store transaction records
@@ -277,6 +282,9 @@ async def _do_book_appointment(shop: Shop, shop_slug: str, request: Request):
                 "status": "pending",
                 "payment_type": "deposit",
                 "metadata": metadata,
+                "connect_destination_account_id": connect_context["connect_account_id"],
+                "platform_fee_bps": connect_context["platform_fee_bps"],
+                "application_fee_amount": connect_context["application_fee_amount"],
                 "created_at": now_iso,
                 "updated_at": now_iso,
             })
@@ -286,18 +294,21 @@ async def _do_book_appointment(shop: Shop, shop_slug: str, request: Request):
                 "shop_id": shop.id,
                 "client_id": client_id,
                 "appointment_id": appointment_id,
-                "amount": float(shop.deposit_amount),
+                "amount": amount,
                 "currency": "usd",
                 "stripe_session_id": payment_link.session_id,
                 "status": "pending",
                 "payment_type": "deposit",
+                "destination_account_id": connect_context["connect_account_id"],
+                "platform_fee_bps": connect_context["platform_fee_bps"],
+                "application_fee_amount": connect_context["application_fee_amount"],
                 "created_at": now_iso,
                 "updated_at": now_iso,
             })
 
             result["checkout_url"] = payment_link.url
             result["session_id"] = payment_link.session_id
-            result["deposit_amount"] = float(shop.deposit_amount)
+            result["deposit_amount"] = amount
         except Exception as e:
             logger.error(f"Stripe checkout creation failed for public booking: {e}")
             result["deposit_error"] = "Payment processing unavailable. Please contact the shop."
