@@ -1,97 +1,63 @@
 # Barbershop Autopilot - Product Requirements Document
 
 ## Original Problem Statement
-Build a production-grade MVP named "barbershop-autopilot" to reduce no-shows and recover lost revenue for a single barbershop. The system handles inbound SMS, booking/rescheduling, deposits/confirmations, cancellation filling from waitlist, and revenue tracking.
+Build a production-grade multi-shop SaaS platform named "barbershop-autopilot" to reduce no-shows and recover lost revenue for barbershops. The system handles inbound SMS, booking/rescheduling, deposits/confirmations, cancellation filling from waitlist, and revenue tracking.
 
 ## Architecture
 - **Backend**: FastAPI + MongoDB + APScheduler
 - **Frontend**: React + Tailwind + Shadcn/UI + Recharts
-- **Auth**: JWT + bcrypt
-- **External Services**: Provider abstraction (real/mock) for Twilio, Stripe, SendGrid, Google Calendar
+- **Auth**: JWT + bcrypt (super_admin + shop_admin roles)
+- **Multi-tenancy**: Every model has shop_id, unique slug index, global username uniqueness
 
 ### Code Structure
 ```
 /app/backend/
-  server.py          # Slim entry point: app, CORS, startup, seed
-  deps.py            # Shared: db, auth, rate limiting
-  models.py          # Pydantic models
-  routes/
-    auth.py          # Auth, shop details CRUD, dashboard, barbers CRUD, services CRUD, today-schedule
-    appointments.py  # Appointment CRUD, scheduling, availability
-    clients.py       # Clients, conversations, waitlist
-    payments.py      # Stripe payments
-    calendar.py      # Google Calendar OAuth, events
-    jobs.py          # Scheduler jobs, reporting, audit, retention
-    public.py        # Public booking portal + SMS consent + shop info
-    webhooks.py      # Twilio + Stripe webhooks
-  providers/         # Provider abstraction (interfaces, mock, real)
-  agents/            # Business logic agents
-  scheduler.py       # APScheduler config
+  server.py, deps.py, models.py
+  routes/ (admin.py, auth.py, appointments.py, clients.py, payments.py, calendar.py, jobs.py, public.py, webhooks.py)
+  providers/, agents/, scheduler.py
 /app/frontend/src/
-  pages/
-    DashboardPage.jsx          # Dashboard with Today's Schedule + Booking Link
-    AppointmentsPage.jsx       # Appointments list + New Appointment modal
-    ManagePage.jsx             # Barber & Service CRUD management
-    SettingsPage.jsx           # Editable shop details, policies, booking link, integrations
-    ClientsPage.jsx            # Client list (no MongoDB IDs)
-    BookingPage.jsx            # Public self-service booking wizard
-    BookingConfirmationPage.jsx
-    + other admin pages...
-  components/layout/Layout.jsx  # Sidebar navigation
+  pages/ (SuperAdminPage, DashboardPage, AppointmentsPage, ManagePage, SettingsPage, ClientsPage, BookingPage, etc.)
+  components/layout/Layout.jsx
 ```
 
-## What's Been Implemented
+## Completed Features
 
-### Phase 1-5: Core MVP through RetentionRebookAgent
-- All database models + provider abstraction layer
-- Agent system (FrontDesk, NoShow, Waitlist, OwnerOps, RetentionRebook)
-- Admin auth, Dashboard, Conversations, Appointments, Waitlist, Settings
-- SMS compliance, audit logging, revenue recovery tracking
-- Scheduling Engine with conflict prevention
-- Client Management Dashboard, APScheduler background jobs, Reporting + Jobs dashboards
+### Core MVP (Phases 1-8)
+- Agent system, scheduling engine, client management, waitlist
+- Stripe Payments (REAL), Google Calendar (REAL OAuth2), SendGrid Email (REAL)
+- Client self-service booking at /book/:shopSlug
+- Modular backend (8 route files)
 
-### Phase 6: Stripe & Google Calendar Integrations
-- **Stripe Payments (REAL)**: Checkout sessions, transactions, status polling, webhook
-- **Google Calendar (REAL OAuth2)**: OAuth flow, token storage/refresh, event CRUD
+### Manager Workflow Fixes (Phase 9-10)
+- New Appointment button, Barber/Service CRUD, Today's Schedule, editable shop details, booking link, cleaned client list
 
-### Phase 7: server.py Refactor
-- Decomposed 2,555-line monolith into 8 route modules + shared deps.py
-
-### Phase 8: Client Self-Service Booking Portal
-- Public booking wizard at `/book`, smart deposit enforcement, Stripe checkout, calendar sync
-
-### Phase 9: Manager Workflow P0 Fixes (Feb 12, 2026)
-- "New Appointment" button on Appointments page
-- Barber & Service Management page at `/manage` with full CRUD
-- "Today's Schedule" timeline on Dashboard
-- 100% test pass rate (26 backend + all frontend)
-
-### Phase 10: P1 Improvements (Feb 12, 2026) — JUST COMPLETED
-- **Editable shop details** in Settings (name, phone, email, address) via PATCH /api/shop/details
-- **Shareable booking link** in Settings + Dashboard with copy-to-clipboard
-- **Removed MongoDB IDs** from client list — shows appointment count instead
-- 100% test pass rate (11 backend + all frontend)
+### Multi-Shop Platform Admin (Phase 11-12, Feb 20 2026) — LATEST
+- **Platform Overview Dashboard** — aggregate stats (total shops, 30d appointments, revenue, no-show rate)
+- **Per-Shop Performance Table** — breakdown by shop (clients, appointments, no-shows, revenue)
+- **Shop Management** — create/list shops, view details, copy booking links
+- **Admin Management** — create/list shop admins per shop
+- **Role-based UI** — Platform Admin nav link visible only for super_admin
+- Backend: GET /api/admin/platform-stats, full shop/admin CRUD
+- 100% test pass on all iterations (11-14)
 
 ## Integration Status
-| Service | Status | Details |
-|---------|--------|---------|
-| SendGrid Email | **Active** | User-provided API key |
-| Stripe Payments | **Active** | Using sk_test_emergent via emergentintegrations |
-| Google Calendar | **Active** | OAuth2 with user-provided client credentials |
-| Twilio SMS | Mocked | TWILIO_ENABLED=false, awaiting credentials |
+| Service | Status |
+|---------|--------|
+| Stripe Payments | **Active** |
+| Google Calendar | **Active** |
+| SendGrid Email | **Active** |
+| Twilio SMS | Mocked (awaiting credentials) |
 
 ## Prioritized Backlog
+### P1
+- [ ] Celery + Redis migration (replace APScheduler)
+- [ ] Billing infrastructure (Stripe Connect)
+- [ ] Enable Twilio SMS
 
-### P1 (Next)
-- [ ] Enable Twilio for real SMS (pending credentials)
-- [ ] Migrate APScheduler to Celery+Redis for production
-- [ ] Billing infrastructure (Stripe Connect for platform fee on deposits)
-
-### P2 (Future)
-- [ ] Migrate MongoDB to PostgreSQL
-- [ ] Multi-shop support
+### P2
+- [ ] MongoDB → PostgreSQL
+- [ ] Enhanced multi-shop analytics
 
 ## Credentials
-- **Admin**: username=admin, password=admin123
-- **Public Booking**: /book
-- **Admin Dashboard**: /login
+- **Super Admin**: admin / admin123
+- **Public Booking**: /book or /book/:shopSlug

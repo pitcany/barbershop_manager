@@ -103,9 +103,22 @@ class Shop(BaseModel):
     confirmation_window_hours: int = 24  # Hours before appointment to send confirmation
     cancellation_window_hours: int = 4  # Minimum notice for cancellation
     max_messages_per_day: int = 4  # Rate limit for outbound SMS
+
+    # Stripe Connect
+    stripe_connect_account_id: Optional[str] = None
+    stripe_charges_enabled: bool = False
+    stripe_payouts_enabled: bool = False
+    platform_fee_bps: Optional[int] = None
     
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("platform_fee_bps")
+    @classmethod
+    def validate_platform_fee_bps(cls, v):
+        if v is not None and (v < 0 or v > 10000):
+            raise ValueError("platform_fee_bps must be between 0 and 10000")
+        return v
 
 
 class Barber(BaseModel):
@@ -374,6 +387,11 @@ class PolicyUpdate(BaseModel):
     retention_enabled: Optional[bool] = None
     retention_lapse_weeks: Optional[int] = None
     retention_cooldown_days: Optional[int] = None
+    # Stripe Connect settings
+    stripe_connect_account_id: Optional[str] = None
+    stripe_charges_enabled: Optional[bool] = None
+    stripe_payouts_enabled: Optional[bool] = None
+    platform_fee_bps: Optional[int] = None
 
     @field_validator("deposit_amount")
     @classmethod
@@ -408,6 +426,13 @@ class PolicyUpdate(BaseModel):
     def validate_max_messages_per_day(cls, v):
         if v is not None and v < 1:
             raise ValueError("max_messages_per_day must be >= 1")
+        return v
+
+    @field_validator("platform_fee_bps")
+    @classmethod
+    def validate_platform_fee_bps(cls, v):
+        if v is not None and (v < 0 or v > 10000):
+            raise ValueError("platform_fee_bps must be between 0 and 10000")
         return v
 
     @field_validator("business_hours")
@@ -475,6 +500,10 @@ class UpdateShopDetailsRequest(BaseModel):
     email: Optional[str] = None
     address: Optional[str] = None
     timezone: Optional[str] = None
+    stripe_connect_account_id: Optional[str] = None
+    stripe_charges_enabled: Optional[bool] = None
+    stripe_payouts_enabled: Optional[bool] = None
+    platform_fee_bps: Optional[int] = None
 
     @field_validator("timezone")
     @classmethod
@@ -501,6 +530,13 @@ class UpdateShopDetailsRequest(BaseModel):
     def validate_phone(cls, v):
         if v is not None:
             return _validate_e164_phone(v)
+        return v
+
+    @field_validator("platform_fee_bps")
+    @classmethod
+    def validate_platform_fee_bps(cls, v):
+        if v is not None and (v < 0 or v > 10000):
+            raise ValueError("platform_fee_bps must be between 0 and 10000")
         return v
 
 
@@ -684,4 +720,3 @@ class RecoveredRevenueEvent(BaseModel):
     currency: str = "usd"
     attributed_at: datetime = Field(default_factory=utc_now)
     notes: Optional[str] = None  # Internal only (e.g., "mocked_execution=true")
-
