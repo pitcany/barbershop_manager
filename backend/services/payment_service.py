@@ -66,7 +66,7 @@ async def apply_checkout_payment_update(
             appointment_id = txn.get("appointment_id")
             if appointment_id:
                 await db.appointments.update_one(
-                    {"id": appointment_id},
+                    {"id": appointment_id, "deposit_paid": {"$ne": True}},
                     {
                         "$set": {
                             "deposit_paid": True,
