@@ -15,6 +15,7 @@ from providers import get_sms, get_calendar, get_payment
 from providers.interfaces import SMSMessage, CalendarEvent
 from audit import create_audit_logger
 from sms_compliance import create_sms_service
+from services.stripe_connect import build_connect_context
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +342,7 @@ class NoShowEnforcementAgent:
         """Create a payment link for deposit"""
         success_url = f"{host_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}&appointment_id={appointment_id}"
         cancel_url = f"{host_url}/payment/cancel?appointment_id={appointment_id}"
+        connect_context = build_connect_context(self.shop, amount)
         
         payment_link = await self.payment.create_payment_link(
             amount=amount,
@@ -350,8 +352,11 @@ class NoShowEnforcementAgent:
             metadata={
                 "appointment_id": appointment_id,
                 "client_id": client["id"],
+                "shop_id": self.shop.id,
                 "type": "deposit"
-            }
+            },
+            connect_account_id=connect_context["connect_account_id"],
+            application_fee_amount=connect_context["application_fee_amount"],
         )
         
         # Update appointment with deposit info
@@ -378,6 +383,9 @@ class NoShowEnforcementAgent:
             "stripe_session_id": payment_link.session_id,
             "status": "pending",
             "payment_type": "deposit",
+            "destination_account_id": connect_context["connect_account_id"],
+            "platform_fee_bps": connect_context["platform_fee_bps"],
+            "application_fee_amount": connect_context["application_fee_amount"],
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         })

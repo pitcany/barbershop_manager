@@ -2,17 +2,17 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from datetime import datetime, timezone
-import os
 import logging
+from pymongo.errors import DuplicateKeyError
 
 from deps import db
-from models import Shop, AppointmentStatus, AuditProvider, AuditAction
-from providers import get_sms, get_payment, get_email
-from providers.interfaces import SMSMessage, EmailMessage
+from models import Shop, AuditProvider, AuditAction
+from providers import get_sms, get_payment
+from providers.interfaces import SMSMessage
 from agents import FrontDeskAgent
 from audit import create_audit_logger
 from sms_compliance import is_opt_out_message, is_twilio_enabled
-from revenue_logger import log_no_show_fee_on_payment_success
+from services.payment_service import apply_checkout_payment_update
 
 logger = logging.getLogger(__name__)
 
@@ -134,39 +134,32 @@ async def stripe_webhook(request: Request):
 
     session_id = result.get("session_id")
     payment_status = result.get("payment_status")
+    event_id = result.get("event_id")
+    event_type = result.get("event_type")
+
+    if event_id:
+        try:
+            await db.stripe_webhook_events.insert_one(
+                {
+                    "stripe_event_id": event_id,
+                    "event_type": event_type,
+                    "session_id": session_id,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        except DuplicateKeyError:
+            return JSONResponse(content={"status": "duplicate_ignored", "event_id": event_id})
 
     if session_id and payment_status:
-        now_iso = datetime.now(timezone.utc).isoformat()
+        await apply_checkout_payment_update(
+            db,
+            session_id=session_id,
+            payment_status=payment_status,
+            stripe_event_id=event_id,
+            checkout_status=result.get("checkout_status"),
+            payment_intent_id=result.get("payment_intent_id"),
+            destination_account_id=result.get("destination_account_id"),
+            application_fee_amount=result.get("application_fee_amount"),
+        )
 
-        if payment_status == "paid":
-            txn_result = await db.payment_transactions.update_one(
-                {"session_id": session_id, "payment_status": {"$ne": "paid"}},
-                {"$set": {"payment_status": "paid", "status": "completed", "updated_at": now_iso}},
-            )
-            if txn_result.modified_count > 0:
-                await db.payments.update_one(
-                    {"stripe_session_id": session_id},
-                    {"$set": {"status": "completed", "updated_at": now_iso}},
-                )
-                txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-                if txn and txn.get("appointment_id"):
-                    await db.appointments.update_one(
-                        {"id": txn["appointment_id"]},
-                        {"$set": {"deposit_paid": True, "status": AppointmentStatus.DEPOSIT_PAID.value, "updated_at": now_iso}},
-                    )
-                    payment_record = await db.payments.find_one({"stripe_session_id": session_id}, {"_id": 0})
-                    appointment = await db.appointments.find_one({"id": txn["appointment_id"]}, {"_id": 0})
-                    if payment_record and appointment:
-                        await log_no_show_fee_on_payment_success(db, payment_record, appointment)
-
-        elif payment_status in ("unpaid", "no_payment_required"):
-            await db.payment_transactions.update_one(
-                {"session_id": session_id},
-                {"$set": {"payment_status": payment_status, "status": "failed", "updated_at": now_iso}},
-            )
-            await db.payments.update_one(
-                {"stripe_session_id": session_id},
-                {"$set": {"status": "failed", "updated_at": now_iso}},
-            )
-
-    return JSONResponse(content={"status": "received"})
+    return JSONResponse(content={"status": "received", "event_id": event_id})

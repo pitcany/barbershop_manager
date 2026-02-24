@@ -186,7 +186,9 @@ class MockPaymentProvider(PaymentProvider):
         currency: str,
         success_url: str,
         cancel_url: str,
-        metadata: Dict[str, str]
+        metadata: Dict[str, str],
+        connect_account_id: Optional[str] = None,
+        application_fee_amount: Optional[int] = None,
     ) -> PaymentLink:
         session_id = f"mock_session_{uuid.uuid4().hex[:12]}"
         
@@ -197,7 +199,9 @@ class MockPaymentProvider(PaymentProvider):
             "payment_status": "unpaid",
             "metadata": metadata,
             "success_url": success_url,
-            "cancel_url": cancel_url
+            "cancel_url": cancel_url,
+            "connect_account_id": connect_account_id,
+            "application_fee_amount": application_fee_amount,
         }
         
         # In mock mode, return a URL that immediately redirects to success
@@ -231,6 +235,7 @@ class MockPaymentProvider(PaymentProvider):
     async def handle_webhook(self, request_body: bytes, signature: str) -> Dict[str, Any]:
         # Mock webhook handler
         return {
+            "event_id": f"evt_mock_{uuid.uuid4().hex[:12]}",
             "event_type": "mock.payment",
             "session_id": "mock",
             "payment_status": "paid"

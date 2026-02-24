@@ -1,206 +1,172 @@
 # Barbershop Autopilot MVP
 
-A production-grade MVP system to reduce no-shows and recover lost revenue for barbershops.
+Production-grade MVP to reduce no-shows and recover lost revenue for barbershops with SMS workflows, deposit enforcement, waitlist fill, and admin reporting.
 
 ## Features
 
-- **SMS Appointment Management**: Handle inbound SMS for booking, confirming, and cancelling appointments
-- **Deposit Enforcement**: Require deposits for last-minute bookings or repeat no-shows
-- **Waitlist Filling**: Automatically contact waitlist clients when slots open up
-- **Revenue Tracking**: Dashboard showing recovered revenue and no-show metrics
-- **Admin Dashboard**: View conversations, manage appointments, and configure policies
-
-## SMS Compliance & Safety
-
-This system is designed for **one real barbershop MVP** and includes compliance safeguards:
-
-### Opt-In Requirements
-- **Explicit Consent Tracking**: All clients must have `sms_consent = true` before receiving any outbound SMS
-- **Consent Source Recorded**: Tracks how consent was obtained (`web_form`, `inbound_sms`, `manual`)
-- **Timestamp Tracking**: Records when consent was granted
-
-### STOP/Opt-Out Handling
-When a client texts `STOP`, `UNSUBSCRIBE`, or `CANCEL` (case-insensitive):
-1. Their consent is immediately revoked (`sms_consent = false`)
-2. One confirmation message is sent: *"You have been unsubscribed and will no longer receive messages."*
-3. All future outbound SMS to that client is suppressed
-
-### Provider Toggles (Environment Flags)
-All external integrations are gated behind environment flags (default: `false`):
-
-| Flag | Description |
-|------|-------------|
-| `TWILIO_ENABLED` | Enable/disable real SMS sending |
-| `STRIPE_ENABLED` | Enable/disable real payment processing |
-| `SEND_EMAILS` | Enable/disable real email sending (SendGrid) |
-| `CALENDAR_ENABLED` | Enable/disable Google Calendar integration |
-
-When disabled:
-- No external API calls are made
-- Business logic still executes
-- All attempts are recorded in the audit log
-
-### Integration Audit Log
-All external side effects are logged to `integration_audit_log`:
-- SMS sends (success or blocked)
-- Payment attempts
-- Calendar mutations
-- Email sends
-
-View the audit log via: `GET /api/audit-log`
-
-### Local Safety Guarantees
-The system can run locally via docker-compose with:
-- No API keys required
-- No outbound network calls
-- Deterministic behavior
+- SMS appointment management (BOOK, CONFIRM, CANCEL, STATUS, HELP)
+- Deposit enforcement for no-show mitigation
+- Waitlist fill automation when slots open
+- Revenue recovery tracking and dashboard charts
+- Admin dashboard for clients, appointments, policies, and operations
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker and Docker Compose (for containerized setup)
-- OR Node.js 18+ and Python 3.11+ (for local development)
+- Python 3.11+
+- Node.js 18+
+- Yarn
+- MongoDB running locally
 
-### Local Development
+### Run locally
 
-1. **Backend Setup**:
+1. Backend:
 ```bash
 cd backend
 pip install -r requirements.txt
 python -m uvicorn server:app --reload --port 8001
 ```
 
-2. **Frontend Setup**:
+2. Frontend:
 ```bash
 cd frontend
 yarn install
 yarn start
 ```
 
-3. **Access the Application**:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8001/api
-- Admin Login: `admin` / `admin123`
+3. Access:
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8001/api`
+- API docs: `http://localhost:8001/docs`
+- Admin login: `admin` / `admin123`
 
-## SMS Simulation (No Twilio Required)
+## SMS Compliance & Safety
 
-Test the SMS flow without live Twilio credentials:
+- Outbound SMS requires explicit consent (`sms_consent=true`)
+- Consent source and timestamp are stored
+- STOP/UNSUBSCRIBE/CANCEL opt-out handling is enforced
+- Integration side effects are audit logged in `integration_audit_log`
+- Providers are mock-first and can be enabled per environment flags
 
-```bash
-# Demo conversation
-python scripts/simulate_sms.py --mode demo
+## Provider Toggles
 
-# Interactive mode
-python scripts/simulate_sms.py --mode interactive
+| Flag | Description |
+|------|-------------|
+| `TWILIO_ENABLED` | Enable real Twilio SMS sending |
+| `STRIPE_ENABLED` | Enable Stripe checkout/payment flows |
+| `STRIPE_CONNECT_ENABLED` | Enable Stripe Connect behavior for destination charges |
+| `SEND_EMAILS` | Enable real SendGrid email sending |
+| `CALENDAR_ENABLED` | Enable Google Calendar integration |
 
-# Test all commands
-python scripts/simulate_sms.py --mode test
-```
+If a provider is disabled or misconfigured, the app falls back to mock providers where applicable.
+
+## Stripe + Connect Notes
+
+- Payment provider uses the official `stripe` Python SDK
+- Stripe Connect support is included for connected account payouts and platform fees
+- Shop policy/details include:
+  - `stripe_connect_account_id`
+  - `stripe_charges_enabled`
+  - `stripe_payouts_enabled`
+  - `platform_fee_bps`
 
 ## Configuration
 
-### Environment Variables
+Set backend environment variables (for example in `backend/.env`):
 
-**Backend (.env)**:
 ```env
 MONGO_URL=mongodb://localhost:27017
 DB_NAME=barbershop_autopilot
 JWT_SECRET=your-secret-key
 ADMIN_PASSWORD=admin123
+CORS_ORIGINS=*
 
-# SMS (disabled by default)
 TWILIO_ENABLED=false
-TWILIO_ACCOUNT_SID=your-sid
-TWILIO_AUTH_TOKEN=your-token
-TWILIO_PHONE_NUMBER=+1234567890
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=
 
-# Email (disabled by default)
+STRIPE_ENABLED=false
+STRIPE_CONNECT_ENABLED=false
+STRIPE_API_KEY=
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+
 SEND_EMAILS=false
-SENDGRID_API_KEY=your-key
-SENDER_EMAIL=noreply@yourdomain.com
+SENDGRID_API_KEY=
+SENDER_EMAIL=
 
-# Payments
-STRIPE_API_KEY=sk_test_...
+CALENDAR_ENABLED=false
+GOOGLE_SERVICE_ACCOUNT_JSON=
+
+REACT_APP_BACKEND_URL=http://localhost:8001
 ```
 
-### Enabling Twilio (Production)
+## SMS Simulation (No Twilio Required)
 
-1. Set `TWILIO_ENABLED=true`
-2. Add your Twilio credentials
-3. Configure your Twilio number to send webhooks to:
-   `https://your-domain.com/api/webhooks/twilio/inbound`
+```bash
+python scripts/simulate_sms.py --mode demo
+python scripts/simulate_sms.py --mode interactive
+python scripts/simulate_sms.py --mode test
+```
 
-### Enabling Stripe (Production)
+## API Overview
 
-1. Replace test key with live key: `STRIPE_API_KEY=sk_live_...`
-2. Configure webhook endpoint: `https://your-domain.com/api/webhooks/stripe`
-
-## API Endpoints
+The backend is modularized under `backend/routes/` and mounted at `/api`.
 
 ### Public
-- `POST /api/public/sms-consent` - SMS consent form
-- `GET /api/public/shop-info` - Shop information
+
+- `GET /api/public/s/{shop_slug}/shop-info`
+- `GET /api/public/s/{shop_slug}/barbers`
+- `GET /api/public/s/{shop_slug}/services`
+- `GET /api/public/s/{shop_slug}/availability`
+- `POST /api/public/s/{shop_slug}/book`
+- `POST /api/public/s/{shop_slug}/sms-consent`
+- Legacy compatibility routes remain available (for example `/api/public/shop-info`)
 
 ### Webhooks
-- `POST /api/webhooks/twilio/inbound` - Twilio SMS webhook
-- `POST /api/webhooks/stripe` - Stripe payment webhook
 
-### Admin (Authenticated)
-- `POST /api/auth/login` - Admin login
-- `GET /api/dashboard/stats` - Dashboard statistics
-- `GET /api/dashboard/revenue-chart` - Revenue chart data
-- `GET /api/appointments` - List appointments
-- `GET /api/conversations` - List SMS conversations
-- `GET /api/waitlist` - List waitlist entries
-- `PATCH /api/shop/policy` - Update shop policies
-- `POST /api/sms/send-test` - Send test SMS (requires TWILIO_ENABLED=true)
+- `POST /api/webhooks/twilio/inbound`
+- `POST /api/webhooks/stripe`
+
+### Auth/Admin Operations
+
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `GET /api/dashboard/stats`
+- `GET /api/dashboard/revenue-chart`
+- `GET /api/appointments`
+- `GET /api/clients`
+- `GET /api/conversations`
+- `GET /api/waitlist`
+- `PATCH /api/shop/policy`
+- `PATCH /api/shop/details`
+- `GET /api/audit-log`
+- `GET /api/reporting/overview`
+
+See `/docs` for the complete live endpoint contract.
 
 ## Architecture
 
-### Provider Abstraction
-
-All external services use provider interfaces for easy mocking:
-
-- **SMSProvider**: Twilio (real) or MockSMSProvider
-- **CalendarProvider**: Google Calendar or MockCalendarProvider  
-- **EmailProvider**: SendGrid or MockEmailProvider
-- **PaymentProvider**: Stripe or MockPaymentProvider
-
-### Agent System
-
-- **FrontDeskAgent**: Handles inbound SMS, booking logic
-- **NoShowEnforcementAgent**: Manages deposits and no-show detection
-- **WaitlistFillAgent**: Fills cancelled slots from waitlist
+- FastAPI app in `backend/server.py`
+- Route modules in `backend/routes/` (auth, appointments, clients, jobs, payments, public, webhooks, admin, calendar)
+- Business logic agents in `backend/agents.py`
+- Integration providers in `backend/providers/` with mock and real implementations
+- Shared service layer in `backend/services/`
+- MongoDB via Motor (direct queries, no ORM)
 
 ## Demo Data
 
-The system seeds with demo data on first run:
-
-- **Shop**: Classic Cuts Barbershop
-- **Barbers**: Marcus Johnson, David Lee, Anthony Davis
-- **Services**: Classic Haircut ($25), Haircut + Beard ($35), Premium Cut ($50), Kids Cut ($15)
-- **Sample Clients**: John Smith, Mike Wilson, James Brown
-- **Sample Appointments & Conversations**
+Initial startup seeds demo entities including one shop, admin user, sample barbers/services/clients, and example appointments.
 
 ## Tech Stack
 
-- **Backend**: FastAPI, MongoDB, Python 3.11+
-- **Frontend**: React, Tailwind CSS, Shadcn/UI
-- **Payments**: Stripe (via emergentintegrations)
-- **SMS**: Twilio (optional)
-- **Email**: SendGrid (optional)
-
-## Support
-
-For questions or issues, check the logs:
-```bash
-# Backend logs
-tail -f /var/log/supervisor/backend.err.log
-
-# Frontend logs
-tail -f /var/log/supervisor/frontend.out.log
-```
+- Backend: FastAPI, Motor/MongoDB, Pydantic, JWT auth
+- Frontend: React 19, Tailwind CSS, shadcn/ui, Recharts
+- Payments: Stripe (optional, mock by default)
+- SMS: Twilio (optional, mock by default)
+- Email: SendGrid (optional, mock by default)
 
 ## License
 

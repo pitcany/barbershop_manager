@@ -85,7 +85,7 @@ class TwilioSMSProvider(SMSProvider):
 
 
 class StripePaymentProvider(PaymentProvider):
-    """Real Stripe payment provider using emergentintegrations"""
+    """Real Stripe payment provider using Stripe SDK."""
 
     def __init__(self, webhook_url: str = ""):
         self.api_key = os.environ.get("STRIPE_API_KEY") or os.environ.get("STRIPE_SECRET_KEY")
@@ -95,10 +95,13 @@ class StripePaymentProvider(PaymentProvider):
         if not self.api_key:
             logger.warning("Stripe API key not found")
     
-    def _get_checkout(self, webhook_url: str = "") -> "StripeCheckout":
-        from emergentintegrations.payments.stripe.checkout import StripeCheckout
-        url = webhook_url or self.default_webhook_url
-        return StripeCheckout(api_key=self.api_key, webhook_url=url)
+    def _is_connect_enabled(self) -> bool:
+        return os.environ.get("STRIPE_CONNECT_ENABLED", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+            "on",
+        )
     
     async def create_payment_link(
         self,
@@ -106,61 +109,117 @@ class StripePaymentProvider(PaymentProvider):
         currency: str,
         success_url: str,
         cancel_url: str,
-        metadata: Dict[str, str]
+        metadata: Dict[str, str],
+        connect_account_id: Optional[str] = None,
+        application_fee_amount: Optional[int] = None,
     ) -> PaymentLink:
         if not self.api_key:
             raise Exception("Stripe not configured")
-        
+
         try:
-            from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest
-            
-            # Derive webhook_url from success_url's origin
-            from urllib.parse import urlparse
-            parsed = urlparse(success_url)
-            origin = f"{parsed.scheme}://{parsed.netloc}"
-            webhook_url = f"{origin}/api/webhooks/stripe"
-            
-            checkout = self._get_checkout(webhook_url)
-            
-            request = CheckoutSessionRequest(
-                amount=float(amount),
-                currency=currency,
-                success_url=success_url,
-                cancel_url=cancel_url,
-                metadata=metadata
+            import stripe
+
+            stripe.api_key = self.api_key
+            unit_amount = max(1, int(round(float(amount) * 100)))
+            pi_data: Dict[str, Any] = {"metadata": metadata}
+
+            if self._is_connect_enabled() and connect_account_id:
+                pi_data["transfer_data"] = {"destination": connect_account_id}
+                if application_fee_amount and application_fee_amount > 0:
+                    pi_data["application_fee_amount"] = int(application_fee_amount)
+
+            session = await asyncio.wait_for(
+                asyncio.to_thread(
+                    stripe.checkout.Session.create,
+                    mode="payment",
+                    line_items=[
+                        {
+                            "price_data": {
+                                "currency": currency.lower(),
+                                "product_data": {"name": "Barbershop Deposit"},
+                                "unit_amount": unit_amount,
+                            },
+                            "quantity": 1,
+                        }
+                    ],
+                    payment_intent_data=pi_data,
+                    metadata=metadata,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                ),
+                timeout=PROVIDER_TIMEOUT,
             )
-            
-            response = await checkout.create_checkout_session(request)
-            
-            logger.info(f"[STRIPE] Created payment session: {response.session_id}")
-            
+
+            logger.info(f"[STRIPE] Created payment session: {session.id}")
+
             return PaymentLink(
-                url=response.url,
-                session_id=response.session_id
+                url=session.url,
+                session_id=session.id,
             )
+        except asyncio.TimeoutError:
+            logger.error("[STRIPE] Timeout creating payment session")
+            raise
         except Exception as e:
             logger.error(f"[STRIPE] Failed to create payment: {e}")
             raise
-    
+
     async def get_payment_status(self, session_id: str) -> PaymentStatus:
         if not self.api_key:
             return PaymentStatus(
                 status="unknown",
                 payment_status="unknown",
                 amount=0,
-                currency="usd"
+                currency="usd",
             )
-        
+
         try:
-            checkout = self._get_checkout()
-            status = await checkout.get_checkout_status(session_id)
-            
+            import stripe
+
+            stripe.api_key = self.api_key
+            session = await asyncio.wait_for(
+                asyncio.to_thread(
+                    stripe.checkout.Session.retrieve,
+                    session_id,
+                    expand=["payment_intent"],
+                ),
+                timeout=PROVIDER_TIMEOUT,
+            )
+
+            payment_intent = session.get("payment_intent")
+            metadata = dict(session.get("metadata") or {})
+            pi_id = None
+            destination_account_id = None
+            application_fee_amount = None
+
+            if isinstance(payment_intent, dict):
+                pi_id = payment_intent.get("id")
+                transfer_data = payment_intent.get("transfer_data") or {}
+                destination_account_id = transfer_data.get("destination")
+                application_fee_amount = payment_intent.get("application_fee_amount")
+            elif isinstance(payment_intent, str):
+                pi_id = payment_intent
+
+            if pi_id:
+                metadata["payment_intent_id"] = pi_id
+            if destination_account_id:
+                metadata["destination_account_id"] = destination_account_id
+            if application_fee_amount is not None:
+                metadata["application_fee_amount"] = application_fee_amount
+
             return PaymentStatus(
-                status=status.status,
-                payment_status=status.payment_status,
-                amount=status.amount_total / 100,  # Convert from cents
-                currency=status.currency,
-                metadata=status.metadata
+                status=session.get("status", "unknown"),
+                payment_status=session.get("payment_status", "unknown"),
+                amount=(session.get("amount_total") or 0) / 100,
+                currency=session.get("currency", "usd"),
+                metadata=metadata,
+            )
+        except asyncio.TimeoutError:
+            logger.error("[STRIPE] Timeout getting payment status")
+            return PaymentStatus(
+                status="error",
+                payment_status="unknown",
+                amount=0,
+                currency="usd",
             )
         except Exception as e:
             logger.error(f"[STRIPE] Failed to get payment status: {e}")
@@ -168,9 +227,9 @@ class StripePaymentProvider(PaymentProvider):
                 status="error",
                 payment_status="unknown",
                 amount=0,
-                currency="usd"
+                currency="usd",
             )
-    
+
     async def handle_webhook(self, request_body: bytes, signature: str) -> Dict[str, Any]:
         if not self.api_key:
             return {"error": "Stripe not configured"}
@@ -181,9 +240,12 @@ class StripePaymentProvider(PaymentProvider):
 
         try:
             import stripe
+
             stripe.api_key = self.api_key
             event = stripe.Webhook.construct_event(
-                request_body, signature, self.webhook_secret
+                request_body,
+                signature,
+                self.webhook_secret,
             )
         except stripe.error.SignatureVerificationError:
             logger.warning("[STRIPE] Webhook signature verification failed")
@@ -192,16 +254,57 @@ class StripePaymentProvider(PaymentProvider):
             logger.error(f"[STRIPE] Webhook parse error: {e}")
             return {"error": "Webhook verification failed"}
 
-        # Process checkout.session.completed events
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
+            payment_intent = session.get("payment_intent")
+            payment_intent_id = None
+            destination_account_id = None
+            application_fee_amount = None
+
+            if payment_intent:
+                try:
+                    pi = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            stripe.PaymentIntent.retrieve,
+                            payment_intent,
+                        ),
+                        timeout=PROVIDER_TIMEOUT,
+                    )
+                    payment_intent_id = pi.get("id")
+                    application_fee_amount = pi.get("application_fee_amount")
+                    transfer_data = pi.get("transfer_data") or {}
+                    destination_account_id = transfer_data.get("destination")
+                except Exception as e:
+                    logger.warning(
+                        "[STRIPE] Failed to expand PaymentIntent for session %s: %s",
+                        session.get("id"),
+                        e,
+                    )
+
             return {
+                "event_id": event.get("id"),
                 "event_type": event["type"],
                 "session_id": session.get("id"),
                 "payment_status": session.get("payment_status"),
+                "payment_intent_id": payment_intent_id or payment_intent,
+                "destination_account_id": destination_account_id,
+                "application_fee_amount": application_fee_amount,
+                "currency": session.get("currency"),
+                "amount_total": session.get("amount_total"),
+            }
+
+        if event["type"] == "checkout.session.expired":
+            session = event["data"]["object"]
+            return {
+                "event_id": event.get("id"),
+                "event_type": event["type"],
+                "session_id": session.get("id"),
+                "payment_status": session.get("payment_status", "unpaid"),
+                "checkout_status": "expired",
             }
 
         return {
+            "event_id": event.get("id"),
             "event_type": event["type"],
             "status": "acknowledged",
         }
