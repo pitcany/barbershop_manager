@@ -67,6 +67,10 @@ export default function SuperAdminPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submittingAdmin, setSubmittingAdmin] = useState(false);
 
+  // Demo data
+  const [seedingDemo, setSeedingDemo] = useState(false);
+  const [clearingData, setClearingData] = useState(false);
+
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
