@@ -1,44 +1,44 @@
 # Barbershop Autopilot - Product Requirements Document
 
 ## Original Problem Statement
-Build a production-grade multi-shop SaaS platform named "barbershop-autopilot" to reduce no-shows and recover lost revenue for barbershops. The system handles inbound SMS, booking/rescheduling, deposits/confirmations, cancellation filling from waitlist, and revenue tracking.
+Build a production-grade multi-shop SaaS platform named "barbershop-autopilot" to reduce no-shows and recover lost revenue for barbershops.
 
 ## Architecture
 - **Backend**: FastAPI + MongoDB + APScheduler
 - **Frontend**: React + Tailwind + Shadcn/UI + Recharts
 - **Auth**: JWT + bcrypt (super_admin + shop_admin roles)
-- **Multi-tenancy**: Every model has shop_id, unique slug index, global username uniqueness
+- **Multi-tenancy**: Every model has shop_id, unique slug index
 
 ### Code Structure
 ```
 /app/backend/
-  server.py, deps.py, models.py
+  server.py, deps.py, models.py, demo_seed.py
   routes/ (admin.py, auth.py, appointments.py, clients.py, payments.py, calendar.py, jobs.py, public.py, webhooks.py)
   providers/, agents/, scheduler.py
 /app/frontend/src/
   pages/ (SuperAdminPage, DashboardPage, AppointmentsPage, ManagePage, SettingsPage, ClientsPage, BookingPage, ConversationsPage, ReportingPage, etc.)
-  components/layout/Layout.jsx
 ```
 
-## Completed Features
+## Completed Features (all tested)
 
 ### Core MVP (Phases 1-8)
-- Agent system, scheduling engine, client management, waitlist
-- Stripe Payments (REAL), Google Calendar (REAL OAuth2), SendGrid Email (REAL)
-- Client self-service booking at /book/:shopSlug
-- Modular backend (9 route files)
+- Agent system, scheduling, client management, waitlist
+- Stripe (REAL), Google Calendar (REAL OAuth2), SendGrid (REAL)
+- Client booking portal at /book/:shopSlug, modular backend
 
-### Manager Workflow Fixes (Phase 9-10)
-- New Appointment button, Barber/Service CRUD, Today's Schedule, editable shop details, booking link, cleaned client list
+### Manager Workflow (Phase 9-10)
+- New Appointment, Barber/Service CRUD, Today's Schedule, editable shop details, booking link
 
-### Multi-Shop Platform Admin (Phase 11-12)
-- Platform Overview Dashboard with aggregate stats + per-shop performance
-- Shop Management CRUD, Admin Management CRUD, role-based UI
+### Multi-Shop Platform (Phase 11-12)
+- Platform Admin with aggregate stats + per-shop performance
+- Shop/Admin CRUD, role-based UI
 
-### Bug Fixes & Demo Data (Feb 25, 2026) — LATEST
-- Fixed Conversations page field name mismatch (client_name, client_phone, last_at, total_messages)
-- Fixed recovered revenue reporting (added attributed_at and source to seed data)
-- Reseeded rich demo data: 135 appointments, $3,720 earned, $400 recovered, 22 messages, 12 recovery events
+### Demo Mode & Bug Fixes (Feb 25, 2026) — LATEST
+- **Demo Mode Toggle** in Platform Admin — "Seed Demo Data" and "Clear Data" buttons per shop
+- **Realistic demo data**: 15 clients, 4 barbers, 7 services, 150+ appointments, 40+ messages (10 realistic SMS threads), 90+ transactions, 12 recovery events, 5 waitlist entries
+- **Fixed**: Conversation polling phantom counter (initialized lastPollTime to now)
+- **Fixed**: Conversation field name mismatch (content vs body, client_name vs client.name)
+- **Fixed**: Recovered revenue missing from reporting (added attributed_at/source to seed)
 
 ## Integration Status
 | Service | Status |
