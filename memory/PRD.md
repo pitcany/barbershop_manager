@@ -16,7 +16,7 @@ Build a production-grade multi-shop SaaS platform named "barbershop-autopilot" t
   routes/ (admin.py, auth.py, appointments.py, clients.py, payments.py, calendar.py, jobs.py, public.py, webhooks.py)
   providers/, agents/, scheduler.py
 /app/frontend/src/
-  pages/ (SuperAdminPage, DashboardPage, AppointmentsPage, ManagePage, SettingsPage, ClientsPage, BookingPage, etc.)
+  pages/ (SuperAdminPage, DashboardPage, AppointmentsPage, ManagePage, SettingsPage, ClientsPage, BookingPage, ConversationsPage, ReportingPage, etc.)
   components/layout/Layout.jsx
 ```
 
@@ -26,19 +26,19 @@ Build a production-grade multi-shop SaaS platform named "barbershop-autopilot" t
 - Agent system, scheduling engine, client management, waitlist
 - Stripe Payments (REAL), Google Calendar (REAL OAuth2), SendGrid Email (REAL)
 - Client self-service booking at /book/:shopSlug
-- Modular backend (8 route files)
+- Modular backend (9 route files)
 
 ### Manager Workflow Fixes (Phase 9-10)
 - New Appointment button, Barber/Service CRUD, Today's Schedule, editable shop details, booking link, cleaned client list
 
-### Multi-Shop Platform Admin (Phase 11-12, Feb 20 2026) — LATEST
-- **Platform Overview Dashboard** — aggregate stats (total shops, 30d appointments, revenue, no-show rate)
-- **Per-Shop Performance Table** — breakdown by shop (clients, appointments, no-shows, revenue)
-- **Shop Management** — create/list shops, view details, copy booking links
-- **Admin Management** — create/list shop admins per shop
-- **Role-based UI** — Platform Admin nav link visible only for super_admin
-- Backend: GET /api/admin/platform-stats, full shop/admin CRUD
-- 100% test pass on all iterations (11-14)
+### Multi-Shop Platform Admin (Phase 11-12)
+- Platform Overview Dashboard with aggregate stats + per-shop performance
+- Shop Management CRUD, Admin Management CRUD, role-based UI
+
+### Bug Fixes & Demo Data (Feb 25, 2026) — LATEST
+- Fixed Conversations page field name mismatch (client_name, client_phone, last_at, total_messages)
+- Fixed recovered revenue reporting (added attributed_at and source to seed data)
+- Reseeded rich demo data: 135 appointments, $3,720 earned, $400 recovered, 22 messages, 12 recovery events
 
 ## Integration Status
 | Service | Status |
