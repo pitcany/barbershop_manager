@@ -35,7 +35,7 @@ export default function ConversationsPage() {
   
   // Real-time polling state
   const [liveMode, setLiveMode] = useState(true);
-  const [lastPollTime, setLastPollTime] = useState(null);
+  const [lastPollTime, setLastPollTime] = useState(() => new Date().toISOString());
   const [newMessageCount, setNewMessageCount] = useState(0);
   const pollIntervalRef = useRef(null);
 
@@ -175,8 +175,8 @@ export default function ConversationsPage() {
 
   const filteredConversations = useMemo(() =>
     conversations.filter(conv =>
-      conv.client?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      conv.client?.phone?.includes(searchTerm)
+      conv.client_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      conv.client_phone?.includes(searchTerm)
     ),
     [conversations, searchTerm]
   );
@@ -290,10 +290,10 @@ export default function ConversationsPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between">
                               <p className="font-medium truncate">
-                                {conv.client?.name || "Unknown"}
+                                {conv.client_name || "Unknown"}
                               </p>
                               <span className="text-xs text-muted-foreground">
-                                {formatMessageTime(conv.last_message_at)}
+                                {formatMessageTime(conv.last_at)}
                               </span>
                             </div>
                             <p className="text-sm text-muted-foreground truncate">
@@ -303,9 +303,9 @@ export default function ConversationsPage() {
                               {conv.last_message}
                             </p>
                           </div>
-                          {conv.message_count > 0 && (
+                          {conv.total_messages > 0 && (
                             <Badge variant="secondary" className="text-xs shrink-0">
-                              {conv.message_count}
+                              {conv.total_messages}
                             </Badge>
                           )}
                         </div>

@@ -597,15 +597,19 @@ async def seed_demo_data():
             EventType.WAITLIST_FILLED.value,
             EventType.REVENUE_RECOVERED.value,
         ):
+            source = "waitlist_fill" if evt["event_type"] == EventType.WAITLIST_FILLED.value else "no_show_fee"
             recovered_revenue.append(
                 {
                     "id": uid(),
                     "shop_id": shop_id,
                     "event_id": evt["id"],
                     "event_type": evt["event_type"],
+                    "source": source,
                     "client_id": evt["client_id"],
                     "amount": evt["revenue_impact"],
+                    "notes": evt.get("data", {}).get("service", f"${evt['revenue_impact']:.0f} recovered"),
                     "created_at": evt["created_at"],
+                    "attributed_at": evt["created_at"],
                 }
             )
     if recovered_revenue:

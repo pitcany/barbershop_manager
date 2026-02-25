@@ -194,3 +194,58 @@ async def list_shop_admins(shop_id: str, user: dict = Depends(get_super_admin)):
         {"_id": 0, "password_hash": 0}
     ).to_list(50)
     return {"admins": admins}
+
+
+# ==================== DEMO DATA ====================
+
+@router.post("/admin/shops/{shop_id}/seed-demo")
+async def seed_demo_data(shop_id: str, user: dict = Depends(get_super_admin)):
+    """Seed realistic demo data for a shop (super-admin only)."""
+    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0, "id": 1, "name": 1})
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+
+    from demo_seed import generate_demo_data
+
+    data = generate_demo_data(shop_id)
+
+    # Clear existing data for this shop
+    collections = ["barbers", "services", "clients", "appointments",
+                   "messages", "events", "transactions",
+                   "recovered_revenue_events", "waitlist"]
+    for col in collections:
+        await db[col].delete_many({"shop_id": shop_id})
+
+    # Insert new data
+    counts = {}
+    for col in collections:
+        docs = data.get(col, [])
+        if docs:
+            await db[col].insert_many(docs)
+        counts[col] = len(docs)
+
+    return {
+        "message": f"Demo data seeded for {shop['name']}",
+        "counts": counts,
+    }
+
+
+@router.post("/admin/shops/{shop_id}/clear-data")
+async def clear_shop_data(shop_id: str, user: dict = Depends(get_super_admin)):
+    """Clear all operational data for a shop (super-admin only). Keeps the shop and admin users."""
+    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0, "id": 1, "name": 1})
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+
+    collections = ["barbers", "services", "clients", "appointments",
+                   "messages", "events", "transactions",
+                   "recovered_revenue_events", "waitlist"]
+    counts = {}
+    for col in collections:
+        result = await db[col].delete_many({"shop_id": shop_id})
+        counts[col] = result.deleted_count
+
+    return {
+        "message": f"Data cleared for {shop['name']}",
+        "deleted": counts,
+    }
