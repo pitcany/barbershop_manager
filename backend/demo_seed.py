@@ -380,7 +380,7 @@ def generate_demo_data(shop_id: str, now: datetime = None):
             "source": "no_show_fee",
             "client_id": apt["client_id"],
             "amount": apt["deposit_amount"] if apt["deposit_amount"] > 0 else 20.0,
-            "notes": f"No-show deposit retained",
+            "notes": "No-show deposit retained",
             "created_at": apt["scheduled_at"],
             "attributed_at": apt["scheduled_at"],
         })
