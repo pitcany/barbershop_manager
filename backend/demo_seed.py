@@ -286,9 +286,11 @@ def generate_demo_data(shop_id: str, now: datetime = None):
                 "shop_id": shop_id,
                 "client_id": client["id"],
                 "direction": direction,
+                "content": body,
                 "body": body,
                 "channel": "sms",
                 "status": "delivered",
+                "read": direction == "outbound",
                 "created_at": msg_time.isoformat(),
             })
 
