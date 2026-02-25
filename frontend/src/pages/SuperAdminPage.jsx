@@ -38,6 +38,9 @@ import {
   DollarSign,
   AlertTriangle,
   TrendingUp,
+  Database,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 
 export default function SuperAdminPage() {
