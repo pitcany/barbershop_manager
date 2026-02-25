@@ -205,6 +205,32 @@ async def update_barber(barber_id: str, body: UpdateBarberRequest, shop: Shop = 
     return updated
 
 
+@router.patch("/barbers/{barber_id}/schedule")
+async def update_barber_schedule(barber_id: str, schedule: dict, shop: Shop = Depends(get_shop)):
+    """Set barber-specific working hours. Same format as shop business_hours.
+    Pass null for a day to mark as off. Pass empty dict {} to clear (use shop hours)."""
+    barber = await db.barbers.find_one({"id": barber_id, "shop_id": shop.id}, {"_id": 0})
+    if not barber:
+        raise HTTPException(status_code=404, detail="Barber not found")
+
+    # Validate format (same as shop business_hours)
+    if schedule:
+        valid_days = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+        invalid_keys = set(schedule.keys()) - valid_days
+        if invalid_keys:
+            raise HTTPException(status_code=400, detail=f"Invalid day names: {invalid_keys}")
+        for day, hours in schedule.items():
+            if hours is None:
+                continue
+            if not isinstance(hours, dict) or set(hours.keys()) != {"open", "close"}:
+                raise HTTPException(status_code=400, detail=f"'{day}' must have 'open' and 'close' keys or be null")
+
+    update_val = schedule if schedule else None
+    await db.barbers.update_one({"id": barber_id}, {"$set": {"schedule": update_val}})
+    updated = await db.barbers.find_one({"id": barber_id}, {"_id": 0})
+    return updated
+
+
 @router.delete("/barbers/{barber_id}")
 async def delete_barber(barber_id: str, shop: Shop = Depends(get_shop)):
     result = await db.barbers.update_one(

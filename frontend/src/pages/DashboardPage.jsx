@@ -5,6 +5,10 @@ import Layout from "../components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
 import {
   Calendar,
@@ -18,7 +22,8 @@ import {
   User,
   Scissors,
   Link2,
-  Copy
+  Copy,
+  UserPlus
 } from "lucide-react";
 import { 
   ResponsiveContainer,
@@ -68,6 +73,13 @@ export default function DashboardPage() {
   const [shopSlug, setShopSlug] = useState("");
   const [loading, setLoading] = useState(true);
 
+  // Walk-in state
+  const [walkInOpen, setWalkInOpen] = useState(false);
+  const [barbers, setBarbers] = useState([]);
+  const [services, setServices] = useState([]);
+  const [walkIn, setWalkIn] = useState({ barber_id: "", service_id: "", client_name: "", client_phone: "" });
+  const [submittingWalkIn, setSubmittingWalkIn] = useState(false);
+
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
@@ -92,6 +104,44 @@ export default function DashboardPage() {
       setShopSlug(shopRes.data.slug || "");
     } catch {
       // Non-critical — dashboard renders fine without the booking link slug
+    }
+  };
+
+  const openWalkIn = async () => {
+    setWalkInOpen(true);
+    try {
+      const [b, s] = await Promise.all([
+        axios.get(`${API}/barbers`),
+        axios.get(`${API}/services`),
+      ]);
+      setBarbers((b.data.barbers || b.data || []).filter(x => x.active !== false));
+      setServices((s.data.services || s.data || []).filter(x => x.active !== false));
+    } catch {
+      toast.error("Failed to load barbers/services");
+    }
+  };
+
+  const submitWalkIn = async () => {
+    if (!walkIn.barber_id || !walkIn.service_id || !walkIn.client_name.trim()) {
+      toast.error("Barber, service, and client name are required");
+      return;
+    }
+    setSubmittingWalkIn(true);
+    try {
+      await axios.post(`${API}/appointments/walk-in`, {
+        barber_id: walkIn.barber_id,
+        service_id: walkIn.service_id,
+        client_name: walkIn.client_name.trim(),
+        client_phone: walkIn.client_phone.trim() || null,
+      });
+      toast.success("Walk-in added!");
+      setWalkInOpen(false);
+      setWalkIn({ barber_id: "", service_id: "", client_name: "", client_phone: "" });
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to add walk-in");
+    } finally {
+      setSubmittingWalkIn(false);
     }
   };
 
@@ -173,6 +223,98 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Quick Walk-In */}
+        <Card className="bg-card border-border border-primary/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+                  <UserPlus className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Walk-In Client</p>
+                  <p className="text-xs text-muted-foreground">Quick-add a client who just walked in</p>
+                </div>
+              </div>
+              <Button
+                data-testid="walk-in-btn"
+                onClick={openWalkIn}
+                className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2"
+              >
+                <UserPlus className="w-4 h-4" /> Add Walk-In
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Walk-In Modal */}
+        <Dialog open={walkInOpen} onOpenChange={setWalkInOpen}>
+          <DialogContent className="bg-card border-border sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="font-heading">Quick Walk-In</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label>Barber *</Label>
+                <Select value={walkIn.barber_id} onValueChange={(v) => setWalkIn(p => ({ ...p, barber_id: v }))}>
+                  <SelectTrigger data-testid="walkin-barber-select" className="bg-input/50 border-input">
+                    <SelectValue placeholder="Select barber" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {barbers.map(b => (
+                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Service *</Label>
+                <Select value={walkIn.service_id} onValueChange={(v) => setWalkIn(p => ({ ...p, service_id: v }))}>
+                  <SelectTrigger data-testid="walkin-service-select" className="bg-input/50 border-input">
+                    <SelectValue placeholder="Select service" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {services.map(s => (
+                      <SelectItem key={s.id} value={s.id}>{s.name} — ${s.price}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Client Name *</Label>
+                <Input
+                  data-testid="walkin-name"
+                  placeholder="Client name"
+                  value={walkIn.client_name}
+                  onChange={(e) => setWalkIn(p => ({ ...p, client_name: e.target.value }))}
+                  className="bg-input/50 border-input"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone (optional)</Label>
+                <Input
+                  data-testid="walkin-phone"
+                  placeholder="+15551234567"
+                  value={walkIn.client_phone}
+                  onChange={(e) => setWalkIn(p => ({ ...p, client_phone: e.target.value }))}
+                  className="bg-input/50 border-input"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setWalkInOpen(false)}>Cancel</Button>
+              <Button
+                data-testid="walkin-submit"
+                onClick={submitWalkIn}
+                disabled={submittingWalkIn}
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                {submittingWalkIn ? "Adding..." : "Add Walk-In"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Today's Schedule */}
         <Card className="bg-card border-border">

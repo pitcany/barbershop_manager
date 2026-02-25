@@ -93,8 +93,8 @@ class FrontDeskAgent:
         self.payment = get_payment()
     
     async def process_inbound_message(
-        self, 
-        client: Client, 
+        self,
+        client: Client,
         message_content: str
     ) -> Tuple[str, Optional[Dict[str, Any]]]:
         """
@@ -102,26 +102,41 @@ class FrontDeskAgent:
         Returns (response_message, action_metadata)
         """
         content = message_content.strip().upper()
-        
+
         # Check for command keywords
         if content in ("HELP", "?", "COMMANDS"):
             return self._format_template(MessageTemplates.HELP_RESPONSE), {"action": "help"}
-        
+
         if content in ("CONFIRM", "YES", "Y"):
+            # First check for pending waitlist offers
+            waitlist_result = await self._handle_waitlist_acceptance(client)
+            if waitlist_result:
+                return waitlist_result
             return await self._handle_confirmation(client)
-        
+
         if content in ("CANCEL", "NO", "N"):
+            # Check if declining a waitlist offer
+            offer = await self.db.pending_waitlist_offers.find_one(
+                {"shop_id": self.shop.id, "client_id": client.id, "status": "pending"},
+                {"_id": 0}
+            )
+            if offer:
+                await self.db.pending_waitlist_offers.update_one(
+                    {"id": offer["id"]},
+                    {"$set": {"status": "declined", "updated_at": datetime.now(timezone.utc).isoformat()}}
+                )
+                return "No problem! You'll stay on the waitlist and we'll let you know if another slot opens up.", {"action": "waitlist_declined"}
             return await self._handle_cancellation(client)
-        
+
         if content in ("RESCHEDULE", "CHANGE"):
             return await self._handle_reschedule_request(client)
-        
+
         if content in ("BOOK", "APPOINTMENT"):
             return await self._handle_booking_request(client)
-        
+
         if content in ("STATUS", "CHECK"):
             return await self._handle_status_check(client)
-        
+
         # Default greeting for unrecognized messages
         return self._format_template(
             MessageTemplates.GREETING,
@@ -133,6 +148,70 @@ class FrontDeskAgent:
         """Check if a status transition is allowed by the state machine."""
         allowed = ALLOWED_TRANSITIONS.get(current_status, set())
         return new_status in allowed
+
+    async def _handle_waitlist_acceptance(self, client: Client) -> Optional[Tuple[str, Dict]]:
+        """Check for and accept a pending waitlist offer. Returns None if no offer exists."""
+        offer = await self.db.pending_waitlist_offers.find_one(
+            {"shop_id": self.shop.id, "client_id": client.id, "status": "pending"},
+            {"_id": 0}
+        )
+        if not offer:
+            return None
+
+        # Mark offer as accepted
+        await self.db.pending_waitlist_offers.update_one(
+            {"id": offer["id"]},
+            {"$set": {"status": "accepted", "updated_at": datetime.now(timezone.utc).isoformat()}}
+        )
+
+        # Create the appointment from the offer details
+        import uuid
+        now_iso = datetime.now(timezone.utc).isoformat()
+        appointment_id = str(uuid.uuid4())
+        appointment = {
+            "id": appointment_id,
+            "shop_id": self.shop.id,
+            "client_id": client.id,
+            "barber_id": offer["barber_id"],
+            "service_id": offer["service_id"],
+            "scheduled_at": offer["scheduled_at"],
+            "duration_minutes": offer.get("duration_minutes", 30),
+            "status": AppointmentStatus.CONFIRMED.value,
+            "confirmed_at": now_iso,
+            "notes": "Booked from waitlist",
+            "price": offer.get("price", 0),
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        await self.db.appointments.insert_one(appointment)
+
+        # Deactivate the waitlist entry
+        await self.db.waitlist.update_one(
+            {"id": offer["waitlist_entry_id"]},
+            {"$set": {"active": False, "filled_appointment_id": appointment_id, "updated_at": now_iso}}
+        )
+
+        # Log events
+        await self._log_event(
+            EventType.WAITLIST_FILLED,
+            client_id=client.id,
+            appointment_id=appointment_id,
+            revenue_impact=offer.get("price", 0),
+        )
+
+        # Update client stats
+        await self.db.clients.update_one(
+            {"id": client.id}, {"$inc": {"total_appointments": 1}}
+        )
+
+        scheduled = datetime.fromisoformat(offer["scheduled_at"].replace("Z", "+00:00"))
+        barber = await self.db.barbers.find_one({"id": offer["barber_id"]}, {"_id": 0, "name": 1})
+        barber_name = barber["name"] if barber else "your barber"
+
+        return (
+            f"You're booked! Your appointment on {scheduled.strftime('%B %d')} "
+            f"at {scheduled.strftime('%I:%M %p')} with {barber_name} is confirmed. See you then!"
+        ), {"action": "waitlist_accepted", "appointment_id": appointment_id}
 
     async def _handle_confirmation(self, client: Client) -> Tuple[str, Dict]:
         """Handle appointment confirmation"""
@@ -520,14 +599,15 @@ class WaitlistFillAgent:
             return False
         
         # Update waitlist entry
+        now_iso = datetime.now(timezone.utc).isoformat()
         await self.db.waitlist.update_one(
             {"id": waitlist_entry["id"]},
             {
                 "$inc": {"contact_attempts": 1},
-                "$set": {"last_contacted": datetime.now(timezone.utc).isoformat()}
+                "$set": {"last_contacted": now_iso}
             }
         )
-        
+
         # Log message
         await self.db.messages.insert_one({
             "id": str(__import__("uuid").uuid4()),
@@ -537,9 +617,33 @@ class WaitlistFillAgent:
             "message_type": "sms",
             "content": message,
             "twilio_sid": response.message_id,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": now_iso
         })
-        
+
+        # Store pending offer so FrontDeskAgent can book on YES
+        service = await self.db.services.find_one(
+            {"id": cancelled_appointment["service_id"]}, {"_id": 0}
+        )
+        # Expire any previous pending offers for this client
+        await self.db.pending_waitlist_offers.update_many(
+            {"shop_id": self.shop.id, "client_id": client["id"], "status": "pending"},
+            {"$set": {"status": "expired", "updated_at": now_iso}}
+        )
+        await self.db.pending_waitlist_offers.insert_one({
+            "id": str(__import__("uuid").uuid4()),
+            "shop_id": self.shop.id,
+            "client_id": client["id"],
+            "waitlist_entry_id": waitlist_entry["id"],
+            "barber_id": cancelled_appointment["barber_id"],
+            "service_id": cancelled_appointment["service_id"],
+            "scheduled_at": cancelled_appointment["scheduled_at"],
+            "duration_minutes": cancelled_appointment.get("duration_minutes", 30),
+            "price": service.get("price", 0) if service else 0,
+            "status": "pending",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        })
+
         return response.success
     
     async def process_cancellation(self, appointment_id: str):

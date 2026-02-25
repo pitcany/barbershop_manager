@@ -11,15 +11,16 @@ import { Badge } from "../components/ui/badge";
 import { Switch } from "../components/ui/switch";
 import { Label } from "../components/ui/label";
 import { toast } from "sonner";
-import { 
-  MessageSquare, 
-  Search, 
+import {
+  MessageSquare,
+  Search,
   User,
   Phone,
   Wifi,
   WifiOff,
   RefreshCw,
-  Zap
+  Zap,
+  Send
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -33,6 +34,10 @@ export default function ConversationsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const messagesEndRef = useRef(null);
   
+  // Reply state
+  const [replyText, setReplyText] = useState("");
+  const [sending, setSending] = useState(false);
+
   // Real-time polling state
   const [liveMode, setLiveMode] = useState(true);
   const [lastPollTime, setLastPollTime] = useState(() => new Date().toISOString());
@@ -155,6 +160,24 @@ export default function ConversationsPage() {
   const handleSelectConversation = (cId) => {
     navigate(`/conversations/${cId}`);
     setNewMessageCount(0);
+  };
+
+  const handleSendMessage = async () => {
+    if (!replyText.trim() || !clientId || sending) return;
+    setSending(true);
+    try {
+      const res = await axios.post(`${API}/conversations/${clientId}/send`, {
+        message: replyText.trim(),
+      });
+      setMessages(prev => [...prev, res.data]);
+      setReplyText("");
+      setLastPollTime(res.data.created_at);
+      fetchConversations();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to send message");
+    } finally {
+      setSending(false);
+    }
   };
 
   const formatMessageTime = (timestamp) => {
@@ -383,12 +406,37 @@ export default function ConversationsPage() {
                   </ScrollArea>
                 </CardContent>
 
-                {/* Footer */}
+                {/* Reply Input */}
                 <div className="p-4 border-t border-border">
-                  <p className="text-xs text-muted-foreground text-center">
-                    Messages are handled automatically by the Autopilot. 
-                    {liveMode && " New messages will appear in real-time."}
-                  </p>
+                  {selectedClient.sms_consent ? (
+                    <form
+                      onSubmit={(e) => { e.preventDefault(); handleSendMessage(); }}
+                      className="flex items-center gap-2"
+                    >
+                      <Input
+                        data-testid="reply-input"
+                        placeholder="Type a message..."
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        disabled={sending}
+                        className="flex-1 bg-input/50 border-input"
+                        maxLength={1600}
+                      />
+                      <Button
+                        type="submit"
+                        data-testid="send-reply-btn"
+                        disabled={!replyText.trim() || sending}
+                        size="icon"
+                        className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
+                      >
+                        <Send className="w-4 h-4" />
+                      </Button>
+                    </form>
+                  ) : (
+                    <p className="text-xs text-red-400 text-center">
+                      Cannot send messages — client has not given SMS consent.
+                    </p>
+                  )}
                 </div>
               </>
             ) : (
