@@ -175,8 +175,8 @@ export default function ConversationsPage() {
 
   const filteredConversations = useMemo(() =>
     conversations.filter(conv =>
-      conv.client?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      conv.client?.phone?.includes(searchTerm)
+      conv.client_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      conv.client_phone?.includes(searchTerm)
     ),
     [conversations, searchTerm]
   );
