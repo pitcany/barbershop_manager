@@ -294,15 +294,6 @@ def generate_demo_data(shop_id: str, now: datetime = None):
 
     # ======================== EVENTS ========================
     events = []
-    event_types = [
-        ("appointment_confirmed", 0),
-        ("appointment_completed", 0),
-        ("no_show", 0),
-        ("waitlist_filled", 0),
-        ("deposit_paid", 0),
-        ("cancellation", 0),
-        ("reminder_sent", 0),
-    ]
 
     for apt in appointments:
         if apt["status"] == "completed":
