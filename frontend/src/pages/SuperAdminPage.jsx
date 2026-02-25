@@ -168,6 +168,28 @@ export default function SuperAdminPage() {
     navigator.clipboard.writeText(link).then(() => toast.success("Booking link copied!")).catch(() => toast.error("Failed to copy"));
   };
 
+  const handleSeedDemo = async () => {
+    if (!selectedShop) return;
+    setSeedingDemo(true);
+    try {
+      const res = await axios.post(`${API}/admin/shops/${selectedShop.id}/seed-demo`);
+      toast.success(res.data.message);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to seed demo data"); }
+    finally { setSeedingDemo(false); }
+  };
+
+  const handleClearData = async () => {
+    if (!selectedShop) return;
+    setClearingData(true);
+    try {
+      const res = await axios.post(`${API}/admin/shops/${selectedShop.id}/clear-data`);
+      toast.success(res.data.message);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to clear data"); }
+    finally { setClearingData(false); }
+  };
+
   if (user?.role !== "super_admin") {
     return (
       <Layout title="Access Denied">
