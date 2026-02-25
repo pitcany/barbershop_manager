@@ -418,6 +418,39 @@ export default function SuperAdminPage() {
                   </CardContent>
                 </Card>
 
+                {/* Demo Data Controls */}
+                <Card className="bg-card border-border">
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Database className="w-5 h-5 text-primary" /> Demo Data
+                    </CardTitle>
+                    <CardDescription>Seed realistic demo data or clear all data for this shop.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-3">
+                      <Button
+                        onClick={handleSeedDemo}
+                        disabled={seedingDemo || clearingData}
+                        data-testid="seed-demo-btn"
+                        className="gap-2"
+                      >
+                        {seedingDemo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                        {seedingDemo ? "Seeding..." : "Seed Demo Data"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={handleClearData}
+                        disabled={seedingDemo || clearingData}
+                        data-testid="clear-data-btn"
+                        className="gap-2 text-red-400 border-red-500/30 hover:bg-red-500/10"
+                      >
+                        {clearingData ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                        {clearingData ? "Clearing..." : "Clear Data"}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
                 {/* Admins */}
                 <Card className="bg-card border-border">
                   <CardHeader className="flex flex-row items-center justify-between">
