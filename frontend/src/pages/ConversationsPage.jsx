@@ -35,7 +35,7 @@ export default function ConversationsPage() {
   
   // Real-time polling state
   const [liveMode, setLiveMode] = useState(true);
-  const [lastPollTime, setLastPollTime] = useState(null);
+  const [lastPollTime, setLastPollTime] = useState(() => new Date().toISOString());
   const [newMessageCount, setNewMessageCount] = useState(0);
   const pollIntervalRef = useRef(null);
 
