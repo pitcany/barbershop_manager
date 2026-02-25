@@ -38,6 +38,9 @@ import {
   DollarSign,
   AlertTriangle,
   TrendingUp,
+  Database,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 
 export default function SuperAdminPage() {
@@ -63,6 +66,10 @@ export default function SuperAdminPage() {
   const [adminForm, setAdminForm] = useState({ username: "", password: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [submittingAdmin, setSubmittingAdmin] = useState(false);
+
+  // Demo data
+  const [seedingDemo, setSeedingDemo] = useState(false);
+  const [clearingData, setClearingData] = useState(false);
 
   useEffect(() => { fetchData(); }, []);
 
@@ -159,6 +166,28 @@ export default function SuperAdminPage() {
   const copyBookingLink = (slug) => {
     const link = `${window.location.origin}/book/${slug}`;
     navigator.clipboard.writeText(link).then(() => toast.success("Booking link copied!")).catch(() => toast.error("Failed to copy"));
+  };
+
+  const handleSeedDemo = async () => {
+    if (!selectedShop) return;
+    setSeedingDemo(true);
+    try {
+      const res = await axios.post(`${API}/admin/shops/${selectedShop.id}/seed-demo`);
+      toast.success(res.data.message);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to seed demo data"); }
+    finally { setSeedingDemo(false); }
+  };
+
+  const handleClearData = async () => {
+    if (!selectedShop) return;
+    setClearingData(true);
+    try {
+      const res = await axios.post(`${API}/admin/shops/${selectedShop.id}/clear-data`);
+      toast.success(res.data.message);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to clear data"); }
+    finally { setClearingData(false); }
   };
 
   if (user?.role !== "super_admin") {
@@ -385,6 +414,39 @@ export default function SuperAdminPage() {
                           /book/{selectedShop.slug} <ExternalLink className="w-3 h-3" />
                         </a>
                       </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Demo Data Controls */}
+                <Card className="bg-card border-border">
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Database className="w-5 h-5 text-primary" /> Demo Data
+                    </CardTitle>
+                    <CardDescription>Seed realistic demo data or clear all data for this shop.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-3">
+                      <Button
+                        onClick={handleSeedDemo}
+                        disabled={seedingDemo || clearingData}
+                        data-testid="seed-demo-btn"
+                        className="gap-2"
+                      >
+                        {seedingDemo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                        {seedingDemo ? "Seeding..." : "Seed Demo Data"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={handleClearData}
+                        disabled={seedingDemo || clearingData}
+                        data-testid="clear-data-btn"
+                        className="gap-2 text-red-400 border-red-500/30 hover:bg-red-500/10"
+                      >
+                        {clearingData ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                        {clearingData ? "Clearing..." : "Clear Data"}
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
