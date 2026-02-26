@@ -153,6 +153,90 @@ async def get_payment_status(session_id: str, shop: Shop = Depends(get_shop)):
     }
 
 
+@router.post("/payments/charge-no-show-fee/{appointment_id}")
+async def charge_no_show_fee(
+    appointment_id: str,
+    request: Request,
+    shop: Shop = Depends(get_shop),
+):
+    """Create a no-show fee payment link and optionally SMS it to the client."""
+    appointment = await db.appointments.find_one({"id": appointment_id, "shop_id": shop.id}, {"_id": 0})
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    if appointment.get("status") != "no_show":
+        raise HTTPException(status_code=400, detail="Can only charge no-show fee for appointments with status 'no_show'")
+
+    # Check no duplicate fee
+    existing = await db.payment_transactions.find_one(
+        {"appointment_id": appointment_id, "payment_type": "no_show_fee", "payment_status": {"$in": ["initiated", "paid"]}},
+        {"_id": 0}
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="No-show fee already created for this appointment")
+
+    amount = float(shop.deposit_amount)
+    connect_context = build_connect_context(shop, amount)
+
+    origin = request.headers.get("x-origin", str(request.base_url).rstrip("/"))
+    success_url = f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}&appointment_id={appointment_id}"
+    cancel_url = f"{origin}/payment/cancel?appointment_id={appointment_id}"
+
+    metadata = {
+        "appointment_id": appointment_id,
+        "client_id": appointment["client_id"],
+        "shop_id": shop.id,
+        "type": "no_show_fee",
+    }
+
+    payment = get_payment()
+    payment_link = await payment.create_payment_link(
+        amount=amount,
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+        connect_account_id=connect_context["connect_account_id"],
+        application_fee_amount=connect_context["application_fee_amount"],
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "client_id": appointment["client_id"],
+        "appointment_id": appointment_id,
+        "amount": amount,
+        "currency": "usd",
+        "session_id": payment_link.session_id,
+        "payment_status": "initiated",
+        "status": "pending",
+        "payment_type": "no_show_fee",
+        "metadata": metadata,
+        "connect_destination_account_id": connect_context["connect_account_id"],
+        "platform_fee_bps": connect_context["platform_fee_bps"],
+        "application_fee_amount": connect_context["application_fee_amount"],
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    })
+
+    await db.payments.insert_one({
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "client_id": appointment["client_id"],
+        "appointment_id": appointment_id,
+        "amount": amount,
+        "currency": "usd",
+        "stripe_session_id": payment_link.session_id,
+        "status": "pending",
+        "payment_type": "no_show_fee",
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    })
+
+    return {"checkout_url": payment_link.url, "session_id": payment_link.session_id, "amount": amount}
+
+
 @router.get("/payments/transactions")
 async def list_payment_transactions(shop: Shop = Depends(get_shop), limit: int = 50, skip: int = 0):
     txns = await db.payment_transactions.find({"shop_id": shop.id}, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)

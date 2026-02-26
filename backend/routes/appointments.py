@@ -83,7 +83,13 @@ async def get_appointment(appointment_id: str, shop: Shop = Depends(get_shop)):
 
 
 @router.patch("/appointments/{appointment_id}/status")
-async def update_appointment_status(appointment_id: str, status: str, shop: Shop = Depends(get_shop)):
+async def update_appointment_status(
+    appointment_id: str,
+    status: str,
+    request: Request,
+    shop: Shop = Depends(get_shop),
+    force: bool = False,
+):
     valid_statuses = [s.value for s in AppointmentStatus]
     if status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
@@ -110,6 +116,21 @@ async def update_appointment_status(appointment_id: str, status: str, shop: Shop
             except (ValueError, TypeError):
                 pass
 
+    # Enforce cancellation window (admin can bypass with force=true)
+    if status == "cancelled" and not force:
+        scheduled_at = appointment.get("scheduled_at", "")
+        if scheduled_at:
+            try:
+                scheduled_dt = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+                hours_until = (scheduled_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+                if 0 < hours_until < shop.cancellation_window_hours:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Cancellation requires {shop.cancellation_window_hours}h notice (appointment in {hours_until:.1f}h). Add ?force=true to override."
+                    )
+            except (ValueError, TypeError):
+                pass
+
     result = await db.appointments.update_one(
         {"id": appointment_id, "shop_id": shop.id},
         {"$set": {"status": status, "updated_at": datetime.now(timezone.utc).isoformat()}}
@@ -127,7 +148,8 @@ async def update_appointment_status(appointment_id: str, status: str, shop: Shop
                 await calendar.delete_event("primary", gcal_event_id)
         elif status == "no_show":
             noshow_agent = NoShowEnforcementAgent(db, shop)
-            await noshow_agent.process_no_show(appointment_id)
+            origin = request.headers.get("x-origin", str(request.base_url).rstrip("/"))
+            await noshow_agent.process_no_show(appointment_id, host_url=origin)
     except Exception as e:
         logger.error(f"Agent trigger failed for {appointment_id} -> {status}: {e}")
 

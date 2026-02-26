@@ -44,6 +44,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard,
+  AlertTriangle,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -197,7 +198,7 @@ export default function AppointmentsPage() {
     }
   };
 
-  const updateStatus = async (appointmentId, newStatus) => {
+  const updateStatus = async (appointmentId, newStatus, force = false) => {
     // Optimistic update
     setAppointments(prev =>
       prev.map(apt =>
@@ -205,12 +206,26 @@ export default function AppointmentsPage() {
       )
     );
     try {
-      await axios.patch(`${API}/appointments/${appointmentId}/status?status=${newStatus}`);
+      const params = new URLSearchParams({ status: newStatus });
+      if (force) params.append("force", "true");
+      await axios.patch(`${API}/appointments/${appointmentId}/status?${params}`);
       toast.success("Status updated");
       fetchAppointments();
     } catch (error) {
-      const detail = error.response?.data?.detail;
-      toast.error(detail || "Failed to update status");
+      const detail = error.response?.data?.detail || "";
+      const status = error.response?.status;
+      // Cancellation window conflict — offer force override
+      if (status === 409 && newStatus === "cancelled" && !force) {
+        toast(detail.split(". Add")[0], {
+          action: {
+            label: "Force Cancel",
+            onClick: () => updateStatus(appointmentId, "cancelled", true),
+          },
+          duration: 10000,
+        });
+      } else {
+        toast.error(detail || "Failed to update status");
+      }
       fetchAppointments(); // Revert on failure
     }
   };
@@ -231,6 +246,19 @@ export default function AppointmentsPage() {
         }).catch(() => { console.log("Deposit link:", res.data.checkout_url); });
       }
     } catch (e) { toast.error(e.response?.data?.detail || "Failed to create deposit link"); }
+  };
+
+  const chargeNoShowFee = async (appointmentId) => {
+    try {
+      const res = await axios.post(`${API}/payments/charge-no-show-fee/${appointmentId}`, null, {
+        headers: { "x-origin": window.location.origin }
+      });
+      if (res.data.checkout_url) {
+        navigator.clipboard.writeText(res.data.checkout_url).then(() => {
+          toast.success(`No-show fee link ($${res.data.amount}) copied to clipboard`);
+        }).catch(() => { console.log("No-show fee link:", res.data.checkout_url); });
+      }
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create no-show fee link"); }
   };
 
   // Open modal and load data for dropdowns
@@ -408,6 +436,13 @@ export default function AppointmentsPage() {
                               className="h-8 text-xs gap-1 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
                               onClick={() => initiateDeposit(apt.id)} data-testid={`send-deposit-link-btn-${apt.id}`}>
                               <CreditCard className="w-3 h-3" /> Send Deposit Link
+                            </Button>
+                          )}
+                          {apt.status === "no_show" && (
+                            <Button variant="outline" size="sm"
+                              className="h-8 text-xs gap-1 border-red-500/30 text-red-400 hover:bg-red-500/10"
+                              onClick={() => chargeNoShowFee(apt.id)} data-testid={`charge-noshow-fee-btn-${apt.id}`}>
+                              <AlertTriangle className="w-3 h-3" /> Charge No-Show Fee
                             </Button>
                           )}
                           {validTargets.length > 0 ? (
