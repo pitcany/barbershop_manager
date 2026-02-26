@@ -13,6 +13,7 @@ from agents import FrontDeskAgent
 from audit import create_audit_logger
 from sms_compliance import is_opt_out_message, is_twilio_enabled
 from services.payment_service import apply_checkout_payment_update
+import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,20 @@ async def twilio_inbound_webhook(request: Request):
         metadata={"from": from_number, "body_length": len(body), "response_sent": bool(response_msg)},
     )
 
-    return JSONResponse(content={"status": "processed", "action": metadata.get("action") if metadata else None})
+    # Publish real-time notification for booking-related SMS actions
+    action = metadata.get("action") if metadata else None
+    if action in ("booking_completed", "booking_completed_deposit_pending"):
+        try:
+            await event_bus.publish(
+                event_type="new_booking",
+                data={"source": "sms", "client_id": client["id"],
+                      "appointment_id": metadata.get("appointment_id", "")},
+                shop_id=shop.id,
+            )
+        except Exception:
+            pass
+
+    return JSONResponse(content={"status": "processed", "action": action})
 
 
 @router.post("/webhooks/stripe")
@@ -161,5 +175,14 @@ async def stripe_webhook(request: Request):
             destination_account_id=result.get("destination_account_id"),
             application_fee_amount=result.get("application_fee_amount"),
         )
+
+        if payment_status == "paid":
+            try:
+                await event_bus.publish(
+                    event_type="deposit_paid",
+                    data={"session_id": session_id, "event_id": event_id},
+                )
+            except Exception:
+                pass
 
     return JSONResponse(content={"status": "received", "event_id": event_id})

@@ -17,6 +17,7 @@ from providers.interfaces import SMSMessage, CalendarEvent
 from audit import create_audit_logger
 from sms_compliance import create_sms_service
 from services.stripe_connect import build_connect_context
+import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,13 @@ class FrontDeskAgent:
         if content in ("RESCHEDULE", "CHANGE"):
             return await self._handle_reschedule_request(client)
 
-        if content in ("BOOK", "APPOINTMENT"):
+        if content.startswith("BOOK") or content == "APPOINTMENT":
+            # Try natural-language shortcut: "BOOK Classic Cut with Marcus Thursday 2pm"
+            extra = message_content.strip()[4:].strip() if content.startswith("BOOK") and len(content) > 4 else ""
+            if extra:
+                result = await self._try_natural_booking(client, extra)
+                if result:
+                    return result
             return await self._handle_booking_request(client)
 
         if content in ("STATUS", "CHECK"):
@@ -372,6 +379,185 @@ class FrontDeskAgent:
             "Reply with the number of the service you'd like to book.\n"
             "Reply CANCEL to exit."
         ), {"action": "booking_started", "services": [s["id"] for s in services]}
+
+    async def _try_natural_booking(
+        self, client: Client, text: str
+    ) -> Optional[Tuple[str, Dict]]:
+        """
+        Try to parse a natural-language booking like:
+            "Classic Cut with Marcus Thursday 2pm"
+            "Beard Trim Friday 10:30am"
+
+        Returns (response_message, metadata) on success, or None to fall back to menu.
+        """
+        text_lower = text.lower().strip()
+
+        # Fetch available services and barbers
+        services = await self.db.services.find(
+            {"shop_id": self.shop.id, "active": True}, {"_id": 0}
+        ).to_list(20)
+        barbers = await self.db.barbers.find(
+            {"shop_id": self.shop.id, "active": True}, {"_id": 0, "id": 1, "name": 1}
+        ).to_list(20)
+
+        if not services:
+            return None
+
+        # --- Match service (longest substring match) ---
+        matched_service = None
+        best_len = 0
+        for s in services:
+            sname = s["name"].lower()
+            if sname in text_lower and len(sname) > best_len:
+                matched_service = s
+                best_len = len(sname)
+        if not matched_service:
+            return None  # Can't identify service — fall back to menu
+
+        # --- Match barber (optional — "with <name>") ---
+        matched_barber = None
+        with_match = re.search(r'\bwith\s+(\w+)', text_lower)
+        if with_match:
+            barber_token = with_match.group(1)
+            for b in barbers:
+                if barber_token in b["name"].lower():
+                    matched_barber = b
+                    break
+        # If no "with" clause, pick first available barber
+        if not matched_barber and barbers:
+            matched_barber = barbers[0]
+
+        if not matched_barber:
+            return None
+
+        # --- Parse date/time ---
+        DAY_NAMES = {
+            "monday": 0, "mon": 0,
+            "tuesday": 1, "tue": 1, "tues": 1,
+            "wednesday": 2, "wed": 2,
+            "thursday": 3, "thu": 3, "thurs": 3,
+            "friday": 4, "fri": 4,
+            "saturday": 5, "sat": 5,
+            "sunday": 6, "sun": 6,
+            "today": -1, "tomorrow": -2,
+        }
+
+        # Find day token
+        target_day = None
+        for day_str, day_val in DAY_NAMES.items():
+            if re.search(r'\b' + day_str + r'\b', text_lower):
+                target_day = (day_str, day_val)
+                break
+
+        if not target_day:
+            return None  # Need at least a day
+
+        # Find time token (e.g. "2pm", "10:30am", "14:00")
+        time_match = re.search(r'\b(\d{1,2}):?(\d{2})?\s*(am|pm)?\b', text_lower)
+        if not time_match:
+            return None
+
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2) or 0)
+        ampm = time_match.group(3)
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+
+        # Calculate target date
+        from zoneinfo import ZoneInfo
+        shop_tz = ZoneInfo(getattr(self.shop, "timezone", "America/New_York"))
+        now_local = datetime.now(shop_tz)
+        day_name, day_val = target_day
+
+        if day_val == -1:  # today
+            target_date = now_local.date()
+        elif day_val == -2:  # tomorrow
+            target_date = (now_local + timedelta(days=1)).date()
+        else:
+            # Next occurrence of that weekday
+            days_ahead = day_val - now_local.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            target_date = (now_local + timedelta(days=days_ahead)).date()
+
+        target_dt = datetime(
+            target_date.year, target_date.month, target_date.day,
+            hour, minute, tzinfo=shop_tz,
+        ).astimezone(timezone.utc)
+
+        # Validate the slot
+        duration = matched_service.get("duration_minutes", 30)
+        from scheduling import create_scheduling_engine
+        shop_data = self.shop.model_dump() if hasattr(self.shop, "model_dump") else vars(self.shop)
+        scheduler = create_scheduling_engine(self.db, shop_data)
+        is_valid, error_msg = await scheduler.validate_appointment_slot(
+            barber_id=matched_barber["id"],
+            scheduled_at=target_dt,
+            duration_minutes=duration,
+        )
+        if not is_valid:
+            return (
+                f"Sorry, that slot isn't available ({error_msg}). "
+                f"Reply BOOK to see available times."
+            ), {"action": "natural_booking_unavailable"}
+
+        # Check deposit requirement
+        hours_until = (target_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+        client_data = await self.db.clients.find_one({"id": client.id}, {"_id": 0})
+        no_shows = client_data.get("no_shows", 0) if client_data else 0
+        deposit_required = hours_until < self.shop.deposit_required_hours or no_shows > 0
+        initial_status = "deposit_pending" if deposit_required else "confirmed"
+
+        # Create the appointment
+        now_iso = datetime.now(timezone.utc).isoformat()
+        appointment_id = str(_uuid_mod.uuid4())
+        price = matched_service.get("price", 0)
+        appointment = {
+            "id": appointment_id,
+            "shop_id": self.shop.id,
+            "client_id": client.id,
+            "barber_id": matched_barber["id"],
+            "service_id": matched_service["id"],
+            "scheduled_at": target_dt.isoformat(),
+            "duration_minutes": duration,
+            "status": initial_status,
+            "notes": "Booked via SMS (natural language)",
+            "price": price,
+            "deposit_required": deposit_required,
+            "deposit_amount": float(self.shop.deposit_amount) if deposit_required else 0,
+            "deposit_paid": False,
+            "source": "sms",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        await self.db.appointments.insert_one(appointment)
+
+        await self.db.clients.update_one(
+            {"id": client.id}, {"$inc": {"total_appointments": 1}}
+        )
+        await self._log_event(
+            EventType.APPOINTMENT_CREATED,
+            client_id=client.id,
+            appointment_id=appointment_id,
+        )
+
+        barber_name = matched_barber["name"]
+        svc_name = matched_service["name"]
+        time_str = target_dt.astimezone(shop_tz).strftime('%A %b %d at %I:%M %p')
+
+        if deposit_required:
+            return (
+                f"Almost there! Your {svc_name} with {barber_name} on {time_str} "
+                f"requires a ${self.shop.deposit_amount:.0f} deposit to confirm.\n"
+                f"We'll send you a payment link shortly."
+            ), {"action": "booking_completed_deposit_pending", "appointment_id": appointment_id}
+        else:
+            return (
+                f"You're all set! {svc_name} with {barber_name} on {time_str}. "
+                f"See you then!"
+            ), {"action": "booking_completed", "appointment_id": appointment_id}
 
     async def _get_booking_session(self, client_id: str) -> Optional[Dict]:
         """Get active booking session, clearing expired ones."""
@@ -1068,4 +1254,13 @@ class WaitlistFillAgent:
         for match in matches:
             if await self.offer_slot_to_waitlist(appointment, match):
                 logger.info(f"Offered cancelled slot to waitlist client {match['client_id']}")
+                try:
+                    await event_bus.publish(
+                        event_type="waitlist_filled",
+                        data={"client_id": match["client_id"],
+                              "appointment_id": appointment_id},
+                        shop_id=self.shop.id,
+                    )
+                except Exception:
+                    pass
                 break
