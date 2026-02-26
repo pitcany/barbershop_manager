@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../App";
 import { Button } from "../ui/button";
+import { toast } from "sonner";
+import useEventStream from "../../hooks/useEventStream";
 import {
   LayoutDashboard,
   MessageSquare,
@@ -16,7 +18,8 @@ import {
   User,
   Wrench,
   BarChart,
-  Shield
+  Shield,
+  Bell,
 } from "lucide-react";
 
 const navItems = [
@@ -33,10 +36,32 @@ const navItems = [
 
 const superAdminItem = { path: "/admin", label: "Platform Admin", icon: Shield };
 
+const EVENT_LABELS = {
+  new_booking: "New Booking",
+  no_show: "No-Show",
+  status_change: "Status Update",
+  waitlist_filled: "Waitlist Filled",
+  deposit_paid: "Deposit Paid",
+};
+
 export default function Layout({ children, title }) {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [unread, setUnread] = useState(0);
+
+  const onEvent = useCallback((event) => {
+    setUnread((n) => n + 1);
+    const label = EVENT_LABELS[event.type] || event.type;
+    const detail = event.data?.client_name
+      ? ` — ${event.data.client_name}`
+      : event.data?.appointment_id
+        ? ` #${event.data.appointment_id.slice(0, 8)}`
+        : "";
+    toast.info(`${label}${detail}`, { duration: 5000 });
+  }, []);
+
+  const { connected } = useEventStream({ onEvent });
 
   const handleLogout = () => {
     logout();
@@ -47,7 +72,7 @@ export default function Layout({ children, title }) {
     <div className="min-h-screen bg-background flex">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
@@ -55,7 +80,7 @@ export default function Layout({ children, title }) {
 
       {/* Sidebar */}
       <aside className={`
-        fixed lg:sticky top-0 left-0 z-50 h-screen w-64 
+        fixed lg:sticky top-0 left-0 z-50 h-screen w-64
         bg-card border-r border-border
         transform transition-transform duration-300 ease-in-out
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
@@ -85,8 +110,8 @@ export default function Layout({ children, title }) {
                 className={({ isActive }) => `
                   flex items-center gap-3 px-6 py-3 text-sm font-medium
                   transition-colors duration-200
-                  ${isActive 
-                    ? 'bg-primary/10 text-primary border-r-2 border-primary' 
+                  ${isActive
+                    ? 'bg-primary/10 text-primary border-r-2 border-primary'
                     : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
                   }
                 `}
@@ -105,8 +130,8 @@ export default function Layout({ children, title }) {
                   className={({ isActive }) => `
                     flex items-center gap-3 px-6 py-3 text-sm font-medium
                     transition-colors duration-200
-                    ${isActive 
-                      ? 'bg-primary/10 text-primary border-r-2 border-primary' 
+                    ${isActive
+                      ? 'bg-primary/10 text-primary border-r-2 border-primary'
                       : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
                     }
                   `}
@@ -164,9 +189,33 @@ export default function Layout({ children, title }) {
         {/* Page content */}
         <div className="p-6 lg:p-8">
           {title && (
-            <h1 className="font-heading text-3xl font-bold tracking-tight mb-8" data-testid="page-title">
-              {title}
-            </h1>
+            <div className="flex items-center justify-between mb-8">
+              <h1 className="font-heading text-3xl font-bold tracking-tight" data-testid="page-title">
+                {title}
+              </h1>
+              <div className="flex items-center gap-2">
+                {/* Connection indicator */}
+                <div
+                  className={`w-2 h-2 rounded-full ${connected ? "bg-emerald-400" : "bg-muted-foreground"}`}
+                  title={connected ? "Live updates connected" : "Live updates disconnected"}
+                />
+                {/* Notification bell */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="relative text-muted-foreground hover:text-foreground"
+                  onClick={() => setUnread(0)}
+                  data-testid="notification-bell"
+                >
+                  <Bell className="w-5 h-5" />
+                  {unread > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-mono font-bold flex items-center justify-center">
+                      {unread > 9 ? "9+" : unread}
+                    </span>
+                  )}
+                </Button>
+              </div>
+            </div>
           )}
           {children}
         </div>

@@ -13,6 +13,7 @@ from providers import get_calendar
 from providers.interfaces import CalendarEvent
 from agents import NoShowEnforcementAgent, WaitlistFillAgent
 from scheduling import create_scheduling_engine
+import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,17 @@ async def update_appointment_status(
             await noshow_agent.process_no_show(appointment_id, host_url=origin)
     except Exception as e:
         logger.error(f"Agent trigger failed for {appointment_id} -> {status}: {e}")
+
+    # Publish real-time notification
+    try:
+        await event_bus.publish(
+            event_type="status_change" if status != "no_show" else "no_show",
+            data={"appointment_id": appointment_id, "status": status,
+                  "client_id": appointment.get("client_id")},
+            shop_id=shop.id,
+        )
+    except Exception:
+        pass
 
     return {"message": "Status updated"}
 
@@ -353,6 +365,17 @@ async def create_appointment(body: CreateAppointmentRequest, shop: Shop = Depend
     except Exception as e:
         logger.error(f"Calendar sync failed: {e}")
 
+    # Publish new booking notification
+    try:
+        await event_bus.publish(
+            event_type="new_booking",
+            data={"appointment_id": appointment_id, "client_name": client.get("name", ""),
+                  "service_name": service.get("name", ""), "barber_name": barber.get("name", "")},
+            shop_id=shop.id,
+        )
+    except Exception:
+        pass
+
     return appointment
 
 
@@ -439,4 +462,15 @@ async def create_walk_in(body: WalkInRequest, shop: Shop = Depends(get_shop)):
     appointment["client"] = {"name": client["name"], "phone": client.get("phone", "")}
     appointment["barber"] = {"name": barber["name"]}
     appointment["service"] = {"name": service["name"], "price": service["price"]}
+
+    try:
+        await event_bus.publish(
+            event_type="new_booking",
+            data={"appointment_id": appointment_id, "client_name": client["name"],
+                  "service_name": service["name"], "barber_name": barber["name"], "walk_in": True},
+            shop_id=shop.id,
+        )
+    except Exception:
+        pass
+
     return appointment
