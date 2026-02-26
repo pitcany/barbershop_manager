@@ -109,6 +109,10 @@ async def startup_event():
     # pending_waitlist_offers: lookup by client for quick accept/decline
     await db.pending_waitlist_offers.create_index([("shop_id", 1), ("client_id", 1), ("status", 1)])
 
+    # sms_booking_sessions: one active session per client per shop
+    await db.sms_booking_sessions.create_index([("shop_id", 1), ("client_id", 1)], unique=True)
+    await db.sms_booking_sessions.create_index([("expires_at", 1)])
+
     # job_runs: unique per (job_name, window_key) for idempotency; indexed for history queries
     await db.job_runs.create_index([("job_name", 1), ("window_key", 1)], unique=True)
     await db.job_runs.create_index([("started_at", -1)])

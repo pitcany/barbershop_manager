@@ -3,6 +3,7 @@ Agent logic for handling SMS conversations, no-show enforcement, and waitlist fi
 Deterministic template-based responses (LLM abstraction ready for future)
 """
 import logging
+import uuid as _uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 import re
@@ -18,6 +19,9 @@ from sms_compliance import create_sms_service
 from services.stripe_connect import build_connect_context
 
 logger = logging.getLogger(__name__)
+
+# Booking session expires after 15 minutes of inactivity
+BOOKING_SESSION_TTL_MINUTES = 15
 
 
 class MessageTemplates:
@@ -103,18 +107,17 @@ class FrontDeskAgent:
         """
         content = message_content.strip().upper()
 
-        # Check for command keywords
+        # Allow explicit exit from booking flow
         if content in ("HELP", "?", "COMMANDS"):
+            await self._clear_booking_session(client.id)
             return self._format_template(MessageTemplates.HELP_RESPONSE), {"action": "help"}
 
-        if content in ("CONFIRM", "YES", "Y"):
-            # First check for pending waitlist offers
-            waitlist_result = await self._handle_waitlist_acceptance(client)
-            if waitlist_result:
-                return waitlist_result
-            return await self._handle_confirmation(client)
-
         if content in ("CANCEL", "NO", "N"):
+            # Clear any booking session first
+            session = await self._get_booking_session(client.id)
+            if session:
+                await self._clear_booking_session(client.id)
+                return "Booking cancelled. Reply BOOK to start again or HELP for commands.", {"action": "booking_cancelled"}
             # Check if declining a waitlist offer
             offer = await self.db.pending_waitlist_offers.find_one(
                 {"shop_id": self.shop.id, "client_id": client.id, "status": "pending"},
@@ -127,6 +130,19 @@ class FrontDeskAgent:
                 )
                 return "No problem! You'll stay on the waitlist and we'll let you know if another slot opens up.", {"action": "waitlist_declined"}
             return await self._handle_cancellation(client)
+
+        # Check for active booking session — route to booking flow handler
+        session = await self._get_booking_session(client.id)
+        if session:
+            return await self._handle_booking_step(client, message_content.strip(), session)
+
+        # Check for command keywords
+        if content in ("CONFIRM", "YES", "Y"):
+            # First check for pending waitlist offers
+            waitlist_result = await self._handle_waitlist_acceptance(client)
+            if waitlist_result:
+                return waitlist_result
+            return await self._handle_confirmation(client)
 
         if content in ("RESCHEDULE", "CHANGE"):
             return await self._handle_reschedule_request(client)
@@ -256,7 +272,7 @@ import uuid
         ), {"action": "confirmed", "appointment_id": appointment["id"]}
     
     async def _handle_cancellation(self, client: Client) -> Tuple[str, Dict]:
-        """Handle appointment cancellation"""
+        """Handle appointment cancellation with cancellation window enforcement"""
         appointment = await self.db.appointments.find_one({
             "shop_id": self.shop.id,
             "client_id": client.id,
@@ -274,6 +290,18 @@ import uuid
         if not self._is_valid_transition(current_status, AppointmentStatus.CANCELLED.value):
             return "Your appointment cannot be cancelled at this time.", {"action": "invalid_transition"}
 
+        # Enforce cancellation window
+        scheduled = datetime.fromisoformat(appointment["scheduled_at"].replace("Z", "+00:00"))
+        hours_until = (scheduled - datetime.now(timezone.utc)).total_seconds() / 3600
+        cancellation_window = getattr(self.shop, "cancellation_window_hours", 4)
+
+        if hours_until < cancellation_window and hours_until > 0:
+            return (
+                f"Sorry, cancellations require at least {cancellation_window} hours' notice. "
+                f"Your appointment is in {hours_until:.0f} hour{'s' if hours_until != 1 else ''}. "
+                f"Please call the shop to discuss options."
+            ), {"action": "cancellation_too_late", "appointment_id": appointment["id"]}
+
         # Update appointment status
         await self.db.appointments.update_one(
             {"id": appointment["id"]},
@@ -284,15 +312,14 @@ import uuid
                 }
             }
         )
-        
+
         # Log event
         await self._log_event(
             EventType.APPOINTMENT_CANCELLED,
             client_id=client.id,
             appointment_id=appointment["id"]
         )
-        
-        scheduled = datetime.fromisoformat(appointment["scheduled_at"].replace("Z", "+00:00"))
+
         return self._format_template(
             MessageTemplates.CANCELLATION_CONFIRMED,
             date=scheduled.strftime('%B %d'),
@@ -307,25 +334,299 @@ import uuid
         ), {"action": "reschedule_request"}
     
     async def _handle_booking_request(self, client: Client) -> Tuple[str, Dict]:
-        """Handle new booking request"""
+        """Handle new booking request — starts multi-step SMS booking flow"""
         # Get available services
         services = await self.db.services.find(
             {"shop_id": self.shop.id, "active": True},
             {"_id": 0}
         ).to_list(10)
-        
+
         if not services:
             return "Sorry, no services are currently available.", {"action": "no_services"}
-        
+
         service_list = "\n".join([
             f"{i+1}. {s['name']} (${s['price']}, {s['duration_minutes']}min)"
             for i, s in enumerate(services)
         ])
-        
+
+        # Create booking session
+        now_iso = datetime.now(timezone.utc).isoformat()
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=BOOKING_SESSION_TTL_MINUTES)).isoformat()
+        await self.db.sms_booking_sessions.delete_many({"shop_id": self.shop.id, "client_id": client.id})
+        await self.db.sms_booking_sessions.insert_one({
+            "id": str(_uuid_mod.uuid4()),
+            "shop_id": self.shop.id,
+            "client_id": client.id,
+            "step": "awaiting_service",
+            "service_ids": [s["id"] for s in services],
+            "service_id": None,
+            "barber_ids": [],
+            "barber_id": None,
+            "slot_options": [],
+            "created_at": now_iso,
+            "updated_at": now_iso,
+            "expires_at": expires,
+        })
+
         return (
             f"Great! Here are our available services:\n{service_list}\n\n"
-            "Reply with the number of the service you'd like to book."
+            "Reply with the number of the service you'd like to book.\n"
+            "Reply CANCEL to exit."
         ), {"action": "booking_started", "services": [s["id"] for s in services]}
+
+    async def _get_booking_session(self, client_id: str) -> Optional[Dict]:
+        """Get active booking session, clearing expired ones."""
+        session = await self.db.sms_booking_sessions.find_one(
+            {"shop_id": self.shop.id, "client_id": client_id},
+            {"_id": 0}
+        )
+        if not session:
+            return None
+        # Check expiry
+        expires = session.get("expires_at", "")
+        if expires:
+            try:
+                exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+                if exp_dt < datetime.now(timezone.utc):
+                    await self._clear_booking_session(client_id)
+                    return None
+            except (ValueError, TypeError):
+                pass
+        return session
+
+    async def _clear_booking_session(self, client_id: str):
+        """Remove booking session for this client."""
+        await self.db.sms_booking_sessions.delete_many(
+            {"shop_id": self.shop.id, "client_id": client_id}
+        )
+
+    async def _touch_booking_session(self, client_id: str, updates: Dict):
+        """Update booking session fields and refresh expiry."""
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=BOOKING_SESSION_TTL_MINUTES)).isoformat()
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+        updates["expires_at"] = expires
+        await self.db.sms_booking_sessions.update_one(
+            {"shop_id": self.shop.id, "client_id": client_id},
+            {"$set": updates}
+        )
+
+    async def _handle_booking_step(
+        self, client: Client, raw_input: str, session: Dict
+    ) -> Tuple[str, Dict]:
+        """Route to the correct booking step handler."""
+        step = session.get("step", "")
+        if step == "awaiting_service":
+            return await self._booking_select_service(client, raw_input, session)
+        elif step == "awaiting_barber":
+            return await self._booking_select_barber(client, raw_input, session)
+        elif step == "awaiting_time":
+            return await self._booking_select_time(client, raw_input, session)
+        else:
+            await self._clear_booking_session(client.id)
+            return "Something went wrong with your booking. Reply BOOK to start again.", {"action": "booking_error"}
+
+    async def _booking_select_service(
+        self, client: Client, raw_input: str, session: Dict
+    ) -> Tuple[str, Dict]:
+        """Handle service selection (step 1)."""
+        service_ids = session.get("service_ids", [])
+        try:
+            choice = int(raw_input.strip())
+        except (ValueError, TypeError):
+            return (
+                f"Please reply with a number (1-{len(service_ids)}) to select a service, "
+                "or CANCEL to exit."
+            ), {"action": "booking_invalid_input"}
+
+        if choice < 1 or choice > len(service_ids):
+            return (
+                f"Please pick a number between 1 and {len(service_ids)}, or CANCEL to exit."
+            ), {"action": "booking_invalid_input"}
+
+        service_id = service_ids[choice - 1]
+        service = await self.db.services.find_one({"id": service_id}, {"_id": 0})
+
+        # Get available barbers
+        barbers = await self.db.barbers.find(
+            {"shop_id": self.shop.id, "active": True},
+            {"_id": 0, "id": 1, "name": 1}
+        ).to_list(10)
+
+        if not barbers:
+            await self._clear_booking_session(client.id)
+            return "Sorry, no barbers are currently available.", {"action": "no_barbers"}
+
+        barber_list = "\n".join([
+            f"{i+1}. {b['name']}" for i, b in enumerate(barbers)
+        ])
+
+        await self._touch_booking_session(client.id, {
+            "step": "awaiting_barber",
+            "service_id": service_id,
+            "barber_ids": [b["id"] for b in barbers],
+        })
+
+        svc_name = service["name"] if service else "Selected service"
+        return (
+            f"You picked: {svc_name}. Now choose your barber:\n{barber_list}\n\n"
+            "Reply with the number of your preferred barber."
+        ), {"action": "service_selected", "service_id": service_id}
+
+    async def _booking_select_barber(
+        self, client: Client, raw_input: str, session: Dict
+    ) -> Tuple[str, Dict]:
+        """Handle barber selection (step 2) — show next available slots."""
+        barber_ids = session.get("barber_ids", [])
+        try:
+            choice = int(raw_input.strip())
+        except (ValueError, TypeError):
+            return (
+                f"Please reply with a number (1-{len(barber_ids)}) to select a barber, "
+                "or CANCEL to exit."
+            ), {"action": "booking_invalid_input"}
+
+        if choice < 1 or choice > len(barber_ids):
+            return (
+                f"Please pick a number between 1 and {len(barber_ids)}, or CANCEL to exit."
+            ), {"action": "booking_invalid_input"}
+
+        barber_id = barber_ids[choice - 1]
+        barber = await self.db.barbers.find_one({"id": barber_id}, {"_id": 0, "name": 1})
+        service_id = session.get("service_id")
+        service = await self.db.services.find_one({"id": service_id}, {"_id": 0})
+        duration = service.get("duration_minutes", 30) if service else 30
+
+        # Get available slots for the next 3 days
+        from scheduling import create_scheduling_engine
+        scheduler = create_scheduling_engine(self.db, self.shop.model_dump() if hasattr(self.shop, 'model_dump') else vars(self.shop))
+
+        all_slots = []
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        for day_offset in range(7):
+            day = today + timedelta(days=day_offset)
+            day_slots = await scheduler.get_available_slots(
+                date=day, barber_id=barber_id, duration_minutes=duration
+            )
+            all_slots.extend(day_slots)
+            if len(all_slots) >= 5:
+                break
+
+        if not all_slots:
+            await self._clear_booking_session(client.id)
+            return (
+                "Sorry, no available slots found in the next week. "
+                "Please call the shop or try again later."
+            ), {"action": "no_slots"}
+
+        # Show up to 5 slots
+        display_slots = all_slots[:5]
+        slot_list = "\n".join([
+            f"{i+1}. {s.start.strftime('%A %b %d')} at {s.start.strftime('%I:%M %p')}"
+            for i, s in enumerate(display_slots)
+        ])
+
+        slot_options = [{"start": s.start.isoformat(), "end": s.end.isoformat()} for s in display_slots]
+
+        await self._touch_booking_session(client.id, {
+            "step": "awaiting_time",
+            "barber_id": barber_id,
+            "slot_options": slot_options,
+        })
+
+        barber_name = barber["name"] if barber else "your barber"
+        return (
+            f"Available times with {barber_name}:\n{slot_list}\n\n"
+            "Reply with the number of your preferred time."
+        ), {"action": "barber_selected", "barber_id": barber_id}
+
+    async def _booking_select_time(
+        self, client: Client, raw_input: str, session: Dict
+    ) -> Tuple[str, Dict]:
+        """Handle time selection (step 3) — create the appointment."""
+        slot_options = session.get("slot_options", [])
+        try:
+            choice = int(raw_input.strip())
+        except (ValueError, TypeError):
+            return (
+                f"Please reply with a number (1-{len(slot_options)}) to pick a time, "
+                "or CANCEL to exit."
+            ), {"action": "booking_invalid_input"}
+
+        if choice < 1 or choice > len(slot_options):
+            return (
+                f"Please pick a number between 1 and {len(slot_options)}, or CANCEL to exit."
+            ), {"action": "booking_invalid_input"}
+
+        slot = slot_options[choice - 1]
+        service_id = session.get("service_id")
+        barber_id = session.get("barber_id")
+
+        service = await self.db.services.find_one({"id": service_id}, {"_id": 0})
+        barber = await self.db.barbers.find_one({"id": barber_id}, {"_id": 0, "name": 1})
+        duration = service.get("duration_minutes", 30) if service else 30
+        price = service.get("price", 0) if service else 0
+
+        # Determine if deposit is needed
+        scheduled_dt = datetime.fromisoformat(slot["start"].replace("Z", "+00:00"))
+        hours_until = (scheduled_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+        client_data = await self.db.clients.find_one({"id": client.id}, {"_id": 0})
+        no_shows = client_data.get("no_shows", 0) if client_data else 0
+        deposit_required = hours_until < self.shop.deposit_required_hours or no_shows > 0
+        initial_status = "deposit_pending" if deposit_required else "confirmed"
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        appointment_id = str(_uuid_mod.uuid4())
+        appointment = {
+            "id": appointment_id,
+            "shop_id": self.shop.id,
+            "client_id": client.id,
+            "barber_id": barber_id,
+            "service_id": service_id,
+            "scheduled_at": slot["start"],
+            "duration_minutes": duration,
+            "status": initial_status,
+            "notes": "Booked via SMS",
+            "price": price,
+            "deposit_required": deposit_required,
+            "deposit_amount": float(self.shop.deposit_amount) if deposit_required else 0,
+            "deposit_paid": False,
+            "source": "sms",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        await self.db.appointments.insert_one(appointment)
+
+        # Update client stats
+        await self.db.clients.update_one(
+            {"id": client.id}, {"$inc": {"total_appointments": 1}}
+        )
+
+        # Log event
+        await self._log_event(
+            EventType.APPOINTMENT_CREATED,
+            client_id=client.id,
+            appointment_id=appointment_id,
+        )
+
+        # Clear booking session
+        await self._clear_booking_session(client.id)
+
+        barber_name = barber["name"] if barber else "your barber"
+        svc_name = service["name"] if service else "your service"
+        time_str = scheduled_dt.strftime('%A %b %d at %I:%M %p')
+
+        if deposit_required:
+            deposit_amt = self.shop.deposit_amount
+            return (
+                f"Almost there! Your {svc_name} with {barber_name} on {time_str} "
+                f"requires a ${deposit_amt:.0f} deposit to confirm.\n"
+                f"We'll send you a payment link shortly."
+            ), {"action": "booking_completed_deposit_pending", "appointment_id": appointment_id}
+        else:
+            return (
+                f"You're all set! Your {svc_name} with {barber_name} is booked for {time_str}. "
+                f"See you then!"
+            ), {"action": "booking_completed", "appointment_id": appointment_id}
     
     async def _handle_status_check(self, client: Client) -> Tuple[str, Dict]:
         """Handle appointment status check"""
@@ -472,13 +773,15 @@ class NoShowEnforcementAgent:
         
         return payment_link.url
     
-    async def process_no_show(self, appointment_id: str):
-        """Handle no-show side-effects (client stats, revenue event).
+    async def process_no_show(self, appointment_id: str, host_url: str = ""):
+        """Handle no-show side-effects: client stats, revenue event, SMS warning, fee collection.
 
         NOTE: The caller (update_appointment_status endpoint) already sets the
         appointment status to 'no_show'.  This method must NOT re-write the
         status to avoid a race condition with concurrent requests.
         """
+        import uuid as _uuid
+
         appointment = await self.db.appointments.find_one(
             {"id": appointment_id, "shop_id": self.shop.id},
             {"_id": 0}
@@ -487,12 +790,18 @@ class NoShowEnforcementAgent:
         if not appointment:
             return
 
+        now_iso = datetime.now(timezone.utc).isoformat()
+        client = await self.db.clients.find_one(
+            {"id": appointment["client_id"], "shop_id": self.shop.id},
+            {"_id": 0}
+        )
+
         # Update client no-show count
         await self.db.clients.update_one(
             {"id": appointment["client_id"], "shop_id": self.shop.id},
             {
                 "$inc": {"no_shows": 1},
-                "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
+                "$set": {"updated_at": now_iso}
             }
         )
 
@@ -502,17 +811,113 @@ class NoShowEnforcementAgent:
             {"_id": 0}
         )
         revenue_lost = service["price"] if service else 0
-        
+
         await self.db.events.insert_one({
-            "id": str(__import__("uuid").uuid4()),
+            "id": str(_uuid.uuid4()),
             "shop_id": self.shop.id,
             "event_type": EventType.NO_SHOW_DETECTED.value,
             "client_id": appointment["client_id"],
             "appointment_id": appointment_id,
             "data": {"revenue_lost": revenue_lost},
             "revenue_impact": -revenue_lost,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": now_iso
         })
+
+        # If deposit was paid, forfeit it as recovered revenue
+        if appointment.get("deposit_paid"):
+            deposit_amount = appointment.get("deposit_amount", 0)
+            if deposit_amount > 0:
+                await self.db.recovered_revenue_events.insert_one({
+                    "id": str(_uuid.uuid4()),
+                    "shop_id": self.shop.id,
+                    "source": "no_show_fee",
+                    "appointment_id": appointment_id,
+                    "client_id": appointment["client_id"],
+                    "amount": deposit_amount,
+                    "currency": "usd",
+                    "attributed_at": now_iso,
+                    "notes": "Deposit forfeited due to no-show",
+                })
+                await self.db.appointments.update_one(
+                    {"id": appointment_id},
+                    {"$set": {"deposit_forfeited": True, "updated_at": now_iso}}
+                )
+
+        # Send no-show warning SMS to client (non-blocking)
+        fee_amount = self.shop.deposit_amount
+        try:
+            if client and client.get("sms_consent"):
+                audit = create_audit_logger(self.db, self.shop.id)
+                sms_service = create_sms_service(self.db, self.shop.id, audit)
+
+                warning_msg = MessageTemplates.NO_SHOW_WARNING.format(fee=f"{fee_amount:.0f}")
+
+                # Create a no-show fee payment link
+                payment_url = None
+                if host_url and fee_amount > 0:
+                    try:
+                        from services.stripe_connect import build_connect_context
+                        connect_context = build_connect_context(self.shop, fee_amount)
+                        success_url = f"{host_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}&appointment_id={appointment_id}"
+                        cancel_url = f"{host_url}/payment/cancel?appointment_id={appointment_id}"
+
+                        payment_link = await self.payment.create_payment_link(
+                            amount=fee_amount,
+                            currency="usd",
+                            success_url=success_url,
+                            cancel_url=cancel_url,
+                            metadata={
+                                "appointment_id": appointment_id,
+                                "client_id": appointment["client_id"],
+                                "shop_id": self.shop.id,
+                                "type": "no_show_fee",
+                            },
+                            connect_account_id=connect_context["connect_account_id"],
+                            application_fee_amount=connect_context["application_fee_amount"],
+                        )
+                        payment_url = payment_link.url
+
+                        # Record payment transaction
+                        await self.db.payment_transactions.insert_one({
+                            "id": str(_uuid.uuid4()),
+                            "shop_id": self.shop.id,
+                            "client_id": appointment["client_id"],
+                            "appointment_id": appointment_id,
+                            "amount": fee_amount,
+                            "currency": "usd",
+                            "session_id": payment_link.session_id,
+                            "payment_status": "initiated",
+                            "status": "pending",
+                            "payment_type": "no_show_fee",
+                            "created_at": now_iso,
+                            "updated_at": now_iso,
+                        })
+                        await self.db.payments.insert_one({
+                            "id": str(_uuid.uuid4()),
+                            "shop_id": self.shop.id,
+                            "client_id": appointment["client_id"],
+                            "appointment_id": appointment_id,
+                            "amount": fee_amount,
+                            "currency": "usd",
+                            "stripe_session_id": payment_link.session_id,
+                            "status": "pending",
+                            "payment_type": "no_show_fee",
+                            "created_at": now_iso,
+                            "updated_at": now_iso,
+                        })
+                    except Exception as e:
+                        logger.error(f"No-show fee payment link creation failed: {e}")
+
+                if payment_url:
+                    warning_msg += f"\n\nPay your no-show fee here: {payment_url}"
+
+                await sms_service.send_sms(
+                    client_id=client["id"],
+                    to_phone=client["phone"],
+                    message=warning_msg,
+                )
+        except Exception as e:
+            logger.error(f"No-show SMS notification failed for {appointment_id}: {e}")
 
 
 class WaitlistFillAgent:
