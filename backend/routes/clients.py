@@ -1,5 +1,6 @@
 """Client, conversation, and waitlist endpoints."""
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from datetime import datetime, timezone
 from typing import Optional
 import uuid
@@ -9,6 +10,8 @@ import asyncio
 
 from deps import db, get_shop, get_current_user, batch_fetch_map
 from models import Shop, CreateClientRequest, UpdateClientRequest, CreateWaitlistRequest
+from audit import create_audit_logger
+from sms_compliance import create_sms_service
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +328,52 @@ async def get_live_activity(
         apt["client_name"] = client["name"] if client else "Unknown"
 
     return {"recent_messages": recent_messages, "recent_appointments": recent_appointments}
+
+
+# ==================== ADMIN SEND MESSAGE ====================
+
+class AdminSendMessageRequest(BaseModel):
+    message: str
+
+
+@router.post("/conversations/{client_id}/send")
+async def admin_send_message(client_id: str, body: AdminSendMessageRequest, shop: Shop = Depends(get_shop)):
+    """Send an SMS to a client from the admin dashboard."""
+    if not body.message or not body.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    if len(body.message) > 1600:
+        raise HTTPException(status_code=400, detail="Message too long (max 1600 characters)")
+
+    client = await db.clients.find_one({"id": client_id, "shop_id": shop.id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    audit = create_audit_logger(db, shop.id)
+    sms_service = create_sms_service(db, shop.id, audit)
+    response = await sms_service.send_sms(
+        client_id=client["id"],
+        to_phone=client["phone"],
+        message=body.message.strip(),
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    msg_record = {
+        "id": str(uuid.uuid4()),
+        "shop_id": shop.id,
+        "client_id": client_id,
+        "direction": "outbound",
+        "message_type": "sms",
+        "content": body.message.strip(),
+        "twilio_sid": response.message_id if response.success else None,
+        "created_at": now_iso,
+    }
+    await db.messages.insert_one(msg_record)
+    msg_record.pop("_id", None)
+
+    if not response.success:
+        raise HTTPException(status_code=422, detail=f"SMS failed: {response.error}")
+
+    return msg_record
 
 
 # ==================== WAITLIST ====================

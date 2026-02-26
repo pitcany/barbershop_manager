@@ -1,9 +1,11 @@
 """Appointment CRUD, scheduling, and availability endpoints."""
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, field_validator
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import uuid
 import logging
+import re
 
 from deps import db, get_shop, get_current_user, batch_fetch_map
 from models import Shop, AppointmentStatus, CreateAppointmentRequest, ALLOWED_TRANSITIONS
@@ -329,4 +331,90 @@ async def create_appointment(body: CreateAppointmentRequest, shop: Shop = Depend
     except Exception as e:
         logger.error(f"Calendar sync failed: {e}")
 
+    return appointment
+
+
+# ==================== WALK-IN ====================
+
+class WalkInRequest(BaseModel):
+    barber_id: str
+    service_id: str
+    client_name: str
+    client_phone: Optional[str] = None
+    notes: Optional[str] = None
+
+    @field_validator("client_phone")
+    @classmethod
+    def validate_phone(cls, v):
+        if v is not None and v.strip():
+            digits = re.sub(r"[^\d+]", "", v)
+            if not digits.startswith("+"):
+                digits = "+" + digits
+            if not re.match(r"^\+\d{10,15}$", digits):
+                raise ValueError("Phone must be in E.164 format (e.g. +15551234567)")
+            return digits
+        return v
+
+
+@router.post("/appointments/walk-in")
+async def create_walk_in(body: WalkInRequest, shop: Shop = Depends(get_shop)):
+    """Quick walk-in: auto-creates client if needed, skips deposit, sets confirmed."""
+    barber = await db.barbers.find_one({"id": body.barber_id, "shop_id": shop.id, "active": True}, {"_id": 0})
+    if not barber:
+        raise HTTPException(status_code=404, detail="Barber not found")
+
+    service = await db.services.find_one({"id": body.service_id, "shop_id": shop.id, "active": True}, {"_id": 0})
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+
+    # Find or create client
+    client = None
+    if body.client_phone and body.client_phone.strip():
+        client = await db.clients.find_one({"shop_id": shop.id, "phone": body.client_phone}, {"_id": 0})
+
+    if not client:
+        client = {
+            "id": str(uuid.uuid4()),
+            "shop_id": shop.id,
+            "name": body.client_name.strip(),
+            "phone": body.client_phone or "",
+            "email": "",
+            "sms_consent": False,
+            "total_appointments": 0,
+            "no_shows": 0,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        await db.clients.insert_one(client)
+        client.pop("_id", None)
+
+    duration = service.get("duration_minutes", 30)
+    appointment_id = str(uuid.uuid4())
+    appointment = {
+        "id": appointment_id,
+        "shop_id": shop.id,
+        "client_id": client["id"],
+        "barber_id": body.barber_id,
+        "service_id": body.service_id,
+        "scheduled_at": now_iso,
+        "duration_minutes": duration,
+        "status": "confirmed",
+        "notes": body.notes or "Walk-in",
+        "price": service.get("price", 0),
+        "walk_in": True,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    await db.appointments.insert_one(appointment)
+    appointment.pop("_id", None)
+
+    # Increment client appointment count
+    await db.clients.update_one({"id": client["id"]}, {"$inc": {"total_appointments": 1}})
+
+    appointment["client"] = {"name": client["name"], "phone": client.get("phone", "")}
+    appointment["barber"] = {"name": barber["name"]}
+    appointment["service"] = {"name": service["name"], "price": service["price"]}
     return appointment

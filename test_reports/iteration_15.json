@@ -1,0 +1,63 @@
+{
+  "summary": "Completed testing of Demo Mode Toggle (seed-demo/clear-data), conversation polling fix, and field name mismatch fixes. Backend: 10/11 tests pass (91%). Frontend: All critical flows verified via Playwright.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "POST /api/admin/shops/{shop_id}/seed-demo without auth returns 401 ✓",
+    "POST /api/admin/shops/{invalid_id}/seed-demo returns 404 ✓",
+    "POST /api/admin/shops/{shop_id}/seed-demo creates expected data counts (15+ clients, 4 barbers, 7 services, 100+ appointments, 30+ messages) ✓",
+    "POST /api/admin/shops/{shop_id}/clear-data without auth returns 401 ✓",
+    "POST /api/admin/shops/{invalid_id}/clear-data returns 404 ✓",
+    "GET /api/conversations returns client_name field (not 'name') ✓",
+    "GET /api/conversations/{client_id} returns messages with 'content' field (not 'body') ✓",
+    "GET /api/conversations/poll/new with current timestamp returns 0 messages (no phantom counter) ✓",
+    "GET /api/conversations/poll/new without since param works correctly ✓",
+    "GET /api/admin/platform-stats includes seeded data ✓",
+    "Frontend: Demo Data card visible in Platform Admin when shop selected ✓",
+    "Frontend: Seed Demo Data button triggers API and refreshes data ✓",
+    "Frontend: Clear Data button visible and styled correctly ✓",
+    "Frontend: Conversations page shows 10 conversations with client names ✓",
+    "Frontend: Conversations page shows message previews (last_message field) ✓",
+    "Frontend: Conversations page shows correct message counts per conversation ✓",
+    "Frontend: NO phantom 'X new messages' counter after page load (fix confirmed) ✓",
+    "Frontend: Individual conversation shows messages with content field ✓",
+    "Frontend: Dashboard shows Today's Appointments (7), Revenue Recovered ($4,328), No-Show Rate (5.1%) ✓",
+    "Frontend: Reporting shows 166 appointments, $2,819 earned, $357 recovered, 7.8% no-show rate ✓",
+    "Frontend: Reporting revenue chart shows non-zero values (Daily Revenue graph populated) ✓",
+    "Frontend: Barber Performance shows 4 barbers with revenue ($1,118, $1,101, $965+) ✓"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_demo_seed.py",
+    "/app/test_reports/pytest/pytest_demo_seed.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "demo_seed.py generates realistic SMS conversation templates - good for demos",
+    "Seed endpoint is idempotent (clears before inserting) - correct behavior",
+    "Clear endpoint only removes operational data, keeps shop and admin_users - correct",
+    "ConversationsPage.jsx initializes lastPollTime to current ISO timestamp - prevents phantom counter",
+    "Backend uses 'content' field in messages, frontend correctly uses msg.content - consistent"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_demo_seed.py"
+  ],
+  "success_rate": {
+    "backend": "91% (10/11 tests - 1 skipped due to rate limiting)",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "super_admin": {"username": "admin", "password": "admin123"}
+  },
+  "seed_data_creation": "Demo data seeded via /api/admin/shops/demo_shop/seed-demo endpoint during testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Demo Mode Toggle fully functional. Seed creates 15+ clients, 4 barbers, 7 services, 150+ appointments, 40+ messages. Conversations use 'content' field (not 'body'). Polling fix uses current timestamp initialization to prevent phantom counters. Rate limiting on login (5 req/15 min) - clear rate_limit_entries collection if needed.",
+  "mocked_apis": ["Twilio SMS (TWILIO_ENABLED=false)"]
+}

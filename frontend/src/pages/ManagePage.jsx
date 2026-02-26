@@ -25,8 +25,9 @@ import {
   TableRow,
 } from "../components/ui/table";
 import { Textarea } from "../components/ui/textarea";
+import { Switch } from "../components/ui/switch";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Users, Scissors } from "lucide-react";
+import { Plus, Pencil, Trash2, Users, Scissors, Clock } from "lucide-react";
 
 export default function ManagePage() {
   const [barbers, setBarbers] = useState([]);
@@ -122,6 +123,73 @@ export default function ManagePage() {
     } catch { toast.error("Failed to remove service"); }
   };
 
+  // ===== BARBER SCHEDULE =====
+  const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+  const DAY_LABELS = { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu", friday: "Fri", saturday: "Sat", sunday: "Sun" };
+
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+  const [scheduleBarber, setScheduleBarber] = useState(null);
+  const [scheduleForm, setScheduleForm] = useState({});
+  const [savingSchedule, setSavingSchedule] = useState(false);
+
+  const openScheduleDialog = (barber) => {
+    setScheduleBarber(barber);
+    // Initialize from barber.schedule or empty (means "use shop hours")
+    const sched = {};
+    DAYS.forEach(day => {
+      if (barber.schedule && day in barber.schedule) {
+        sched[day] = barber.schedule[day]; // null = off, {open, close} = custom
+      } else {
+        sched[day] = undefined; // undefined = use shop default
+      }
+    });
+    setScheduleForm(sched);
+    setScheduleDialogOpen(true);
+  };
+
+  const toggleDay = (day, enabled) => {
+    setScheduleForm(prev => ({
+      ...prev,
+      [day]: enabled ? { open: "09:00", close: "18:00" } : null,
+    }));
+  };
+
+  const updateDayTime = (day, field, value) => {
+    setScheduleForm(prev => ({
+      ...prev,
+      [day]: { ...prev[day], [field]: value },
+    }));
+  };
+
+  const clearScheduleDay = (day) => {
+    setScheduleForm(prev => {
+      const next = { ...prev };
+      delete next[day];
+      return next;
+    });
+  };
+
+  const saveSchedule = async () => {
+    setSavingSchedule(true);
+    try {
+      // Build the schedule object: only include days that were explicitly set
+      const payload = {};
+      DAYS.forEach(day => {
+        if (day in scheduleForm) {
+          payload[day] = scheduleForm[day]; // null or {open, close}
+        }
+      });
+      await axios.patch(`${API}/barbers/${scheduleBarber.id}/schedule`, payload);
+      toast.success("Schedule saved");
+      setScheduleDialogOpen(false);
+      fetchAll();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to save schedule");
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
   return (
     <Layout title="Manage Shop">
       <div data-testid="manage-page" className="space-y-6">
@@ -151,6 +219,7 @@ export default function ManagePage() {
                       <TableHead className="text-muted-foreground">Name</TableHead>
                       <TableHead className="text-muted-foreground">Email</TableHead>
                       <TableHead className="text-muted-foreground">Phone</TableHead>
+                      <TableHead className="text-muted-foreground">Schedule</TableHead>
                       <TableHead className="text-muted-foreground text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -170,6 +239,12 @@ export default function ManagePage() {
                         <TableCell className="font-medium">{b.name}</TableCell>
                         <TableCell className="text-muted-foreground">{b.email || "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{b.phone || "—"}</TableCell>
+                        <TableCell>
+                          <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => openScheduleDialog(b)}>
+                            <Clock className="w-3 h-3" />
+                            {b.schedule ? "Custom" : "Shop Default"}
+                          </Button>
+                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
                             <Button variant="ghost" size="icon" onClick={() => openBarberDialog(b)} data-testid={`edit-barber-${b.id}`}>
@@ -302,6 +377,79 @@ export default function ManagePage() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setServiceDialogOpen(false)}>Cancel</Button>
               <Button onClick={saveService} data-testid="save-service-btn">{editingService ? "Update" : "Add Service"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ===== BARBER SCHEDULE DIALOG ===== */}
+        <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
+          <DialogContent className="bg-card border-border sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="font-heading">
+                {scheduleBarber?.name}'s Schedule
+              </DialogTitle>
+              <DialogDescription>
+                Set custom hours or leave as shop default. Toggle off to mark a day off.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2 max-h-[400px] overflow-y-auto">
+              {DAYS.map(day => {
+                const isCustom = day in scheduleForm;
+                const isOn = isCustom && scheduleForm[day] !== null;
+                const isOff = isCustom && scheduleForm[day] === null;
+                return (
+                  <div key={day} className="flex items-center gap-3 p-2 rounded-lg border border-border">
+                    <div className="w-10 text-xs font-medium text-muted-foreground uppercase">
+                      {DAY_LABELS[day]}
+                    </div>
+                    <Switch
+                      checked={isCustom ? isOn : true}
+                      onCheckedChange={(checked) => toggleDay(day, checked)}
+                    />
+                    {isOff ? (
+                      <span className="text-sm text-red-400">Day off</span>
+                    ) : isOn ? (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="time"
+                          value={scheduleForm[day]?.open || "09:00"}
+                          onChange={(e) => updateDayTime(day, "open", e.target.value)}
+                          className="w-28 bg-input/50 border-input text-sm"
+                        />
+                        <span className="text-muted-foreground text-sm">to</span>
+                        <Input
+                          type="time"
+                          value={scheduleForm[day]?.close || "18:00"}
+                          onChange={(e) => updateDayTime(day, "close", e.target.value)}
+                          className="w-28 bg-input/50 border-input text-sm"
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">Shop default</span>
+                    )}
+                    {isCustom && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-muted-foreground ml-auto"
+                        onClick={() => clearScheduleDay(day)}
+                      >
+                        Reset
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setScheduleDialogOpen(false)}>Cancel</Button>
+              <Button
+                onClick={saveSchedule}
+                disabled={savingSchedule}
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                {savingSchedule ? "Saving..." : "Save Schedule"}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
