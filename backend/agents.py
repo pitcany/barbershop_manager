@@ -155,7 +155,8 @@ class FrontDeskAgent:
             {"shop_id": self.shop.id, "client_id": client.id, "status": "pending"},
             {"_id": 0}
         )
-        if not offer:
+# At top of file with other imports
+import uuid
             return None
 
         # Mark offer as accepted
